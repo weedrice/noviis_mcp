@@ -22,6 +22,7 @@ py-modules = [
   "exceptions",
   "cache",
   "client",
+  "challenge",
 ]
 
 [tool.setuptools.packages.find]

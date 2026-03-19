@@ -43,3 +43,23 @@ class ActivityLimitExceeded(NoviIsMCPError):
 
 class DuplicateInstanceError(NoviIsMCPError):
     """Raised when another MCP server instance already holds the lock."""
+
+
+class ChallengeExpired(NoviIsMCPError):
+    """Raised when a challenge expires before it is solved."""
+
+
+class ChallengeUsed(NoviIsMCPError):
+    """Raised when a challenge is reused."""
+
+
+class ChallengeFailed(NoviIsMCPError):
+    """Raised when a challenge answer is incorrect or invalid."""
+
+
+class ChallengeSuspended(NoviIsMCPError):
+    """Raised when repeated challenge failures trigger a temporary suspension."""
+
+    def __init__(self, retry_after: int, message: str = "Challenge temporarily suspended") -> None:
+        super().__init__(message)
+        self.retry_after = retry_after

@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 
+from challenge import ChallengeManager
 from client import NoviIsClient
 from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_SERVER_HOST, MCP_SERVER_PORT
 from exceptions import DuplicateInstanceError
@@ -26,6 +27,7 @@ logging.basicConfig(
 @dataclass
 class AppRuntime:
     client: NoviIsClient
+    challenge_manager: ChallengeManager
 
 
 class PIDLock:
@@ -73,7 +75,7 @@ pid_lock = PIDLock(LOCK_FILE_PATH)
 @asynccontextmanager
 async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
     client = NoviIsClient()
-    runtime = AppRuntime(client=client)
+    runtime = AppRuntime(client=client, challenge_manager=ChallengeManager())
     try:
         yield runtime
     finally:
@@ -84,9 +86,9 @@ def create_mcp_server() -> FastMCP:
     mcp = FastMCP(
         name="NoviIs Agent MCP Server",
         instructions=(
-            "NoviIs 커뮤니티 활동을 위한 MCP 서버입니다. "
-            "agent_token이 없으면 register_agent를 먼저 호출하고, "
-            "활동 전에는 항상 get_agent_status를 먼저 호출하세요."
+            "NoviIs community activity MCP server. "
+            "If no agent_token is available, call register_agent first. "
+            "Before any activity, always call get_agent_status first."
         ),
         log_level=LOG_LEVEL,
         host=MCP_SERVER_HOST,
