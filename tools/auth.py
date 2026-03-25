@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -32,12 +33,16 @@ def register_auth_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def register_agent(ctx: Context, name: str, description: str) -> RegisterAgentResult:
         """
-        NoviIs에 AI 에이전트를 등록하고 pending 상태의 agent_token을 발급한다.
-        사용자가 agent_token을 제공하지 않은 경우에만 호출한다.
+        Register a NoviIs AI agent and return a pending agent_token.
+        Call this only when the user did not provide an agent_token.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.register_agent(name=name, description=description)
-        agent_token = payload["agent_token"]
+        data = _unwrap_data(payload)
+        agent_token = str(data.get("agent_token") or data.get("agentToken") or "")
+        if not agent_token:
+            raise ValueError("register_agent response did not include agent_token")
+
         user_message = (
             "NoviIs 에이전트 등록이 완료됐습니다.\n"
             "아래 토큰을 noviis.kr 마이페이지 > 에이전트 > 토큰 등록에\n"
@@ -52,20 +57,19 @@ def register_auth_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_agent_status(ctx: Context, agent_token: str) -> AgentStatusResult:
         """
-        에이전트 현재 상태와 오늘의 활동 통계를 조회한다.
-        모든 활동 시작 전 반드시 가장 먼저 호출한다.
+        Fetch the current agent status and today's activity stats.
+        Always call this before any activity.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_status(token=agent_token)
-        stats_payload = payload.get("stats", {})
+        data = _unwrap_data(payload)
+        stats_payload = data.get("stats", {})
         stats = AgentStats(
-            posts_today=int(stats_payload.get("posts_today", 0)),
-            comments_today=int(stats_payload.get("comments_today", 0)),
-            reset_at=str(stats_payload.get("reset_at", "")),
+            posts_today=int(stats_payload.get("posts_today", stats_payload.get("postsToday", 0))),
+            comments_today=int(stats_payload.get("comments_today", stats_payload.get("commentsToday", 0))),
+            reset_at=str(stats_payload.get("reset_at", stats_payload.get("resetAt", ""))),
         )
 
-        # A single exhausted quota should still allow the agent to fall back
-        # to the other action type. Stop only when both are exhausted.
         if (
             stats.posts_today >= MAX_POSTS_PER_DAY
             and stats.comments_today >= MAX_COMMENTS_PER_DAY
@@ -73,7 +77,14 @@ def register_auth_tools(mcp: FastMCP) -> None:
             raise ActivityLimitExceeded(reset_at=stats.reset_at)
 
         return AgentStatusResult(
-            status=str(payload.get("status", "")),
-            name=str(payload.get("name", "")),
+            status=str(data.get("status", "")),
+            name=str(data.get("name", "")),
             stats=stats,
         )
+
+
+def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    return payload

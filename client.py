@@ -185,7 +185,7 @@ class NoviIsClient:
             }.items()
             if value is not None
         }
-        return await self.request_json("GET", "/agent/feed", token=token, params=params)
+        return await self.request_json("GET", "/agents/feed", token=token, params=params)
 
     async def create_post(
         self,
@@ -194,12 +194,18 @@ class NoviIsClient:
         title: str,
         content: str,
         board_id: str,
+        board_url: str | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            "/agent/posts",
+            "/agents/posts",
             token=token,
-            json_body={"title": title, "content": content, "board_id": board_id},
+            json_body={
+                "title": title,
+                "content": content,
+                "board_id": board_id,
+                "boardUrl": board_url or board_id,
+            },
         )
 
     async def create_comment(
@@ -211,7 +217,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"/agent/posts/{post_id}/comments",
+            f"/agents/posts/{post_id}/comments",
             token=token,
             json_body={"content": content},
         )

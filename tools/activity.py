@@ -75,9 +75,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if cached is None:
             runtime = ctx.request_context.lifespan_context
             payload = await runtime.client.get_boards()
-            boards_payload = payload.get("boards", [])
-            if not isinstance(boards_payload, list):
-                boards_payload = []
+            boards_payload = _unwrap_list_data(payload)
             set_boards_cache(boards_payload)
             cached = boards_payload
 
@@ -103,7 +101,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             limit=limit,
             cursor=cursor,
         )
-        raw_posts = payload.get("posts", [])
+        data = _unwrap_dict_data(payload)
+        raw_posts = data.get("posts", [])
         if not isinstance(raw_posts, list):
             raw_posts = []
 
@@ -113,7 +112,12 @@ def register_activity_tools(mcp: FastMCP) -> None:
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title", ""))
-            content_preview = str(item.get("content_preview", ""))
+            content_preview = str(
+                item.get("content_preview")
+                or item.get("contentPreview")
+                or item.get("contentsExcerpt")
+                or ""
+            )
             haystack = f"{title}\n{content_preview}".lower()
             if any(keyword in haystack for keyword in INJECTION_KEYWORDS):
                 filtered_count += 1
@@ -122,7 +126,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         return FeedResult(
             posts=filtered_posts,
-            next_cursor=_optional_str(payload.get("next_cursor")),
+            next_cursor=_optional_str(data.get("next_cursor", data.get("nextCursor"))),
             filtered_count=filtered_count,
             injection_warning=INJECTION_WARNING,
         )
@@ -172,11 +176,13 @@ def register_activity_tools(mcp: FastMCP) -> None:
             title=title,
             content=content,
             board_id=board_id,
+            board_url=await _resolve_board_url(runtime, board_id),
         )
+        data = _unwrap_dict_data(payload)
         return CreatePostResult(
             status="created",
-            post_id=str(payload.get("post_id", "")),
-            url=str(payload.get("url", "")),
+            post_id=str(data.get("post_id", data.get("postId", ""))),
+            url=str(data.get("url", "")),
         )
 
     @mcp.tool()
@@ -223,30 +229,38 @@ def register_activity_tools(mcp: FastMCP) -> None:
             post_id=post_id,
             content=content,
         )
+        data = _unwrap_dict_data(payload)
         return CreateCommentResult(
             status="created",
-            comment_id=str(payload.get("comment_id", "")),
+            comment_id=str(data.get("comment_id", data.get("commentId", ""))),
         )
 
 
 def _to_board(item: dict[str, Any]) -> Board:
+    latest_posts = item.get("latestPosts")
+    post_count = len(latest_posts) if isinstance(latest_posts, list) else int(item.get("post_count", 0))
     return Board(
-        board_id=str(item.get("board_id", "")),
-        name=str(item.get("name", "")),
+        board_id=str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
+        name=str(item.get("name", item.get("boardName", ""))),
         description=str(item.get("description", "")),
-        post_count=int(item.get("post_count", 0)),
+        post_count=post_count,
     )
 
 
 def _to_feed_post(item: dict[str, Any]) -> FeedPost:
     return FeedPost(
-        post_id=str(item.get("post_id", "")),
+        post_id=str(item.get("post_id", item.get("postId", ""))),
         title=str(item.get("title", "")),
-        content_preview=str(item.get("content_preview", "")),
-        board_id=str(item.get("board_id", "")),
-        comment_count=int(item.get("comment_count", 0)),
-        created_at=str(item.get("created_at", "")),
-        has_my_comment=bool(item.get("has_my_comment", False)),
+        content_preview=str(
+            item.get("content_preview")
+            or item.get("contentPreview")
+            or item.get("contentsExcerpt")
+            or ""
+        ),
+        board_id=str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
+        comment_count=int(item.get("comment_count", item.get("commentCount", 0))),
+        created_at=str(item.get("created_at", item.get("createdAt", ""))),
+        has_my_comment=bool(item.get("has_my_comment", item.get("hasMyComment", False))),
     )
 
 
@@ -254,6 +268,47 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+async def _resolve_board_url(runtime: Any, board_id: str) -> str:
+    cached = get_boards_cache()
+    boards = cached
+    if boards is None:
+        payload = await runtime.client.get_boards()
+        boards = _unwrap_list_data(payload)
+        set_boards_cache(boards)
+
+    board_id_str = str(board_id)
+    for item in boards or []:
+        if not isinstance(item, dict):
+            continue
+        candidates = {
+            str(item.get("board_id", "")),
+            str(item.get("boardId", "")),
+            str(item.get("boardUrl", "")),
+        }
+        if board_id_str in candidates:
+            board_url = item.get("boardUrl")
+            if board_url:
+                return str(board_url)
+    return board_id_str
+
+
+def _unwrap_dict_data(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    return payload
+
+
+def _unwrap_list_data(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    boards = payload.get("boards")
+    if isinstance(boards, list):
+        return [item for item in boards if isinstance(item, dict)]
+    return []
 
 
 def _verify_or_reissue_post_challenge(

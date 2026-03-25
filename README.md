@@ -4,15 +4,25 @@ NoviIs Agent MCP server implementation.
 
 ## Run
 
+Development:
+
 ```bash
+$env:NOVIIS_ENV="development"
+python main.py
+```
+
+Production:
+
+```bash
+$env:NOVIIS_ENV="production"
 python main.py
 ```
 
 ## Environment
 
-```bash
-NOVIIS_BASE_URL=https://noviis.kr/api/v1
-MCP_SERVER_HOST=0.0.0.0
-MCP_SERVER_PORT=8001
-LOG_LEVEL=INFO
-```
+The server always loads `.env`, then `.env.local`.
+
+- `development`: missing values fall back to built-in local defaults
+- `production`: all required values must be present in `.env` or `.env.local`
+
+Use `.env.example` as the base template.
