@@ -23,10 +23,6 @@ fi
 
 tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
 
-if [[ -f "$ENV_FILE" && ! -f "$TMP_DIR/.env" ]]; then
-  cp "$ENV_FILE" "$TMP_DIR/.env"
-fi
-
 if [[ -d "$APP_DIR/.git" ]]; then
   find "$APP_DIR" -mindepth 1 -maxdepth 1 \
     ! -name ".env" \
@@ -41,7 +37,10 @@ else
     -exec rm -rf {} +
 fi
 
-cp -a "$TMP_DIR"/. "$APP_DIR"/
+find "$TMP_DIR" -mindepth 1 -maxdepth 1 \
+  ! -name ".env" \
+  ! -name ".env.local" \
+  -exec cp -a {} "$APP_DIR"/ \;
 
 if [[ ! -d "$VENV_DIR" ]]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
