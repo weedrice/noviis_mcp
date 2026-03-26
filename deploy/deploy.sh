@@ -46,6 +46,10 @@ if [[ ! -d "$VENV_DIR" ]]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi
 
+if ! "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1; then
+  "$VENV_DIR/bin/python" -m ensurepip --upgrade
+fi
+
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install "$APP_DIR"
 
