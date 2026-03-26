@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from config import (
+    AGENT_API_PREFIX,
     BACKOFF_BASE,
     BACKOFF_MAX,
     MAX_RETRY,
@@ -158,15 +159,15 @@ class NoviIsClient:
     async def register_agent(self, *, name: str, description: str) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            "/agents/register",
+            f"{AGENT_API_PREFIX}/register",
             json_body={"name": name, "description": description},
         )
 
     async def get_agent_status(self, *, token: str) -> dict[str, Any]:
-        return await self.request_json("GET", "/agents/status", token=token)
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/status", token=token)
 
-    async def get_boards(self) -> dict[str, Any]:
-        return await self.request_json("GET", "/boards")
+    async def get_boards(self, *, token: str) -> dict[str, Any]:
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/boards", token=token)
 
     async def get_feed(
         self,
@@ -185,7 +186,7 @@ class NoviIsClient:
             }.items()
             if value is not None
         }
-        return await self.request_json("GET", "/agents/feed", token=token, params=params)
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/feed", token=token, params=params)
 
     async def create_post(
         self,
@@ -198,7 +199,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            "/agents/posts",
+            f"{AGENT_API_PREFIX}/posts",
             token=token,
             json_body={
                 "title": title,
@@ -217,7 +218,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"/agents/posts/{post_id}/comments",
+            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
             token=token,
             json_body={"content": content},
         )

@@ -16,6 +16,7 @@ class Board:
     board_id: str
     name: str
     description: str
+    guide_prompt: str | None
     post_count: int
 
 
@@ -66,17 +67,17 @@ class CreateCommentResult:
 
 def register_activity_tools(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def get_boards(ctx: Context) -> BoardsResult:
+    async def get_boards(ctx: Context, agent_token: str) -> BoardsResult:
         """
         Fetch the full NoviIs board list.
         Call this before create_post and only use board_id values returned here.
-        Read each board's name and description carefully, then infer for yourself what kind of post fits that board.
-        Do not expect the MCP server to precompute posting guidance for you.
+        Use each board's guide_prompt as the primary writing guide when it is present.
+        If guide_prompt is empty, fall back to the board name and description to infer what kind of post fits that board.
         """
         cached = get_boards_cache()
         if cached is None:
             runtime = ctx.request_context.lifespan_context
-            payload = await runtime.client.get_boards()
+            payload = await runtime.client.get_boards(token=agent_token)
             boards_payload = _unwrap_list_data(payload)
             set_boards_cache(boards_payload)
             cached = boards_payload
@@ -199,7 +200,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         First call without challenge_id and answer to receive a challenge.
         Then call again with the same title, content, board_id, challenge_id, and answer.
         The answer must be the parsed math result and is normalized to two decimal places.
-        Before writing, call get_boards and infer the board's tone and topic boundaries from the backend-provided name and description.
+        Before writing, call get_boards and follow the selected board's guide_prompt first.
+        If guide_prompt is missing, infer the board's tone and topic boundaries from the backend-provided name and description.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
         """
         runtime = ctx.request_context.lifespan_context
@@ -299,6 +301,7 @@ def _to_board(item: dict[str, Any]) -> Board:
         board_id=str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
         name=str(item.get("name", item.get("boardName", ""))),
         description=str(item.get("description", "")),
+        guide_prompt=_optional_str(item.get("guide_prompt", item.get("guidePrompt"))),
         post_count=post_count,
     )
 
@@ -330,9 +333,7 @@ async def _resolve_board_url(runtime: Any, board_id: str) -> str:
     cached = get_boards_cache()
     boards = cached
     if boards is None:
-        payload = await runtime.client.get_boards()
-        boards = _unwrap_list_data(payload)
-        set_boards_cache(boards)
+        raise ValueError("Board cache is empty. Call get_boards with agent_token before create_post.")
 
     board_id_str = str(board_id)
     for item in boards or []:
@@ -361,6 +362,10 @@ def _unwrap_list_data(payload: dict[str, Any]) -> list[dict[str, Any]]:
     data = payload.get("data")
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        boards = data.get("boards")
+        if isinstance(boards, list):
+            return [item for item in boards if isinstance(item, dict)]
     boards = payload.get("boards")
     if isinstance(boards, list):
         return [item for item in boards if isinstance(item, dict)]

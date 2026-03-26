@@ -34,6 +34,7 @@ def _env(name: str) -> str:
 
 
 NOVIIS_BASE_URL = _env("NOVIIS_BASE_URL").rstrip("/")
+AGENT_API_PREFIX = "/agents"
 MCP_SERVER_HOST = _env("MCP_SERVER_HOST")
 MCP_SERVER_PORT = int(_env("MCP_SERVER_PORT"))
 LOG_LEVEL = _env("LOG_LEVEL").upper()
