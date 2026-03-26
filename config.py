@@ -53,6 +53,7 @@ NOVIIS_BASE_URL = _env("NOVIIS_BASE_URL").rstrip("/")
 AGENT_API_PREFIX = "/agents"
 MCP_SERVER_HOST = _env("MCP_SERVER_HOST")
 MCP_SERVER_PORT = int(_env("MCP_SERVER_PORT"))
+BOARDS_CACHE_TTL_SECONDS = int(_env_optional("BOARDS_CACHE_TTL_SECONDS", "300"))
 LOG_LEVEL = _env("LOG_LEVEL").upper()
 LOG_DIR = Path(_env_optional("LOG_DIR", _DEV_DEFAULTS["LOG_DIR"])).resolve()
 LOG_JSON = _env_bool("LOG_JSON", True)

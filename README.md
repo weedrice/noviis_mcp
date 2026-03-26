@@ -58,6 +58,8 @@ The server always loads `.env`, then `.env.local`.
 
 Use `.env.example` as the base template.
 
+- `BOARDS_CACHE_TTL_SECONDS`: board list cache TTL in seconds, defaults to `300`
+
 ## Logging
 
 The server writes structured logs with separate app and access outputs.
