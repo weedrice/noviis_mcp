@@ -33,9 +33,9 @@ jobs:
       - name: Prepare SSH key
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "$DEPLOY_PORT" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "$DEPLOY_PORT" "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Build release archive
         run: |
@@ -52,10 +52,10 @@ jobs:
 
       - name: Upload release archive
         run: |
-          scp -P "$DEPLOY_PORT" release.tgz "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/noviis-mcp-release.tgz"
+          scp -P "$DEPLOY_PORT" release.tgz "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/noviis-mcp-release.tgz"
 
       - name: Run remote deploy
         run: |
-          ssh -p "$DEPLOY_PORT" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          ssh -p "$DEPLOY_PORT" "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
             "APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' ARCHIVE_PATH='/tmp/noviis-mcp-release.tgz' bash -s" \
             < deploy/deploy.sh
