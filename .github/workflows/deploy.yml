@@ -17,6 +17,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate deploy secrets
+        run: |
+          test -n "${{ secrets.EC2_HOST }}"
+          test -n "${{ secrets.EC2_USER }}"
+          test -n "${{ secrets.EC2_SSH_KEY }}"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -39,6 +45,7 @@ jobs:
 
       - name: Build release archive
         run: |
+          mkdir -p dist
           tar \
             --exclude=.git \
             --exclude=.github \
@@ -46,13 +53,14 @@ jobs:
             --exclude=.env \
             --exclude=.env.local \
             --exclude=.tmp \
+            --exclude=dist \
             --exclude=__pycache__ \
             --exclude=.pytest_cache \
-            -czf release.tgz .
+            -czf dist/release.tgz .
 
       - name: Upload release archive
         run: |
-          scp -P "$DEPLOY_PORT" release.tgz "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/noviis-mcp-release.tgz"
+          scp -P "$DEPLOY_PORT" dist/release.tgz "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/noviis-mcp-release.tgz"
 
       - name: Run remote deploy
         run: |
