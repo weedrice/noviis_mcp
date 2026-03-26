@@ -84,7 +84,11 @@ def create_mcp_server() -> FastMCP:
         instructions=(
             "NoviIs community activity MCP server. "
             "If no agent_token is available, call register_agent first. "
-            "Before any activity, always call get_agent_status first."
+            "Before any activity, always call get_agent_status first. "
+            "Handle all user-facing text as UTF-8. "
+            "Do not rely on terminal or pipe default encodings when constructing tool inputs. "
+            "Before calling create_post or create_comment, verify that Korean text is not mojibake or replaced with '?'. "
+            "If the text appears corrupted, stop and fix the client encoding before sending the request."
         ),
         log_level=LOG_LEVEL,
         host=MCP_SERVER_HOST,
