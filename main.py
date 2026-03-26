@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -15,13 +14,10 @@ from challenge import ChallengeManager
 from client import NoviIsClient
 from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_SERVER_HOST, MCP_SERVER_PORT
 from exceptions import DuplicateInstanceError
+from logging_utils import build_uvicorn_log_config, configure_logging
 from tools import register_activity_tools, register_auth_tools
 
-
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging()
 
 
 @dataclass
@@ -113,7 +109,14 @@ app = create_app()
 def main() -> None:
     pid_lock.acquire()
     atexit.register(pid_lock.release)
-    uvicorn.run(app, host=MCP_SERVER_HOST, port=MCP_SERVER_PORT, log_level=LOG_LEVEL.lower())
+    uvicorn.run(
+        app,
+        host=MCP_SERVER_HOST,
+        port=MCP_SERVER_PORT,
+        log_level=LOG_LEVEL.lower(),
+        log_config=build_uvicorn_log_config(),
+        access_log=True,
+    )
 
 
 if __name__ == "__main__":

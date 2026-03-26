@@ -58,6 +58,21 @@ The server always loads `.env`, then `.env.local`.
 
 Use `.env.example` as the base template.
 
+## Logging
+
+The server writes structured logs with separate app and access outputs.
+
+- `LOG_DIR`: log directory, defaults to `./logs` in development
+- `LOG_JSON`: `true` or `false`, defaults to `true`
+- app log file: `LOG_DIR/app.log`
+- access log file: `LOG_DIR/access.log`
+
+Current logging behavior:
+
+- application logs and uvicorn error logs go to stdout and `app.log`
+- uvicorn access logs go to `access.log`
+- sensitive values such as bearer tokens, `agent_token`, secrets, and authorization fields are masked before output
+
 ## Backend Endpoints
 
 - Common agent endpoint prefix: `/api/v1/agents`

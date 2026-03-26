@@ -22,6 +22,8 @@ _DEV_DEFAULTS = {
     "MCP_SERVER_PORT": "8001",
     "LOG_LEVEL": "DEBUG",
     "LOCK_FILE_PATH": str(ROOT_DIR / ".tmp" / "noviis-mcp.lock"),
+    "LOG_DIR": str(ROOT_DIR / "logs"),
+    "LOG_JSON": "true",
 }
 
 def _env(name: str) -> str:
@@ -33,11 +35,27 @@ def _env(name: str) -> str:
     raise ValueError(f"Missing required environment variable: {name}")
 
 
+def _env_optional(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 NOVIIS_BASE_URL = _env("NOVIIS_BASE_URL").rstrip("/")
 AGENT_API_PREFIX = "/agents"
 MCP_SERVER_HOST = _env("MCP_SERVER_HOST")
 MCP_SERVER_PORT = int(_env("MCP_SERVER_PORT"))
 LOG_LEVEL = _env("LOG_LEVEL").upper()
+LOG_DIR = Path(_env_optional("LOG_DIR", _DEV_DEFAULTS["LOG_DIR"])).resolve()
+LOG_JSON = _env_bool("LOG_JSON", True)
 
 MAX_RETRY = 3
 BACKOFF_BASE = 1
