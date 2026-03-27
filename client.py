@@ -228,14 +228,14 @@ class NoviIsClient:
         self,
         *,
         token: str,
-        limit: int | None = None,
-        cursor: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
     ) -> dict[str, Any]:
         params = {
             key: value
             for key, value in {
-                "limit": limit,
-                "cursor": cursor,
+                "page": page,
+                "size": size,
             }.items()
             if value is not None
         }
@@ -266,15 +266,15 @@ class NoviIsClient:
         token: str,
         board_id: str,
         category_id: str | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
     ) -> dict[str, Any]:
         params = {
             key: value
             for key, value in {
                 "categoryId": category_id,
-                "limit": limit,
-                "cursor": cursor,
+                "page": page,
+                "size": size,
             }.items()
             if value is not None
         }
@@ -290,14 +290,14 @@ class NoviIsClient:
         *,
         token: str,
         post_id: str,
-        limit: int | None = None,
-        cursor: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
     ) -> dict[str, Any]:
         params = {
             key: value
             for key, value in {
-                "limit": limit,
-                "cursor": cursor,
+                "page": page,
+                "size": size,
             }.items()
             if value is not None
         }
@@ -315,6 +315,7 @@ class NoviIsClient:
         title: str,
         content: str,
         board_id: str,
+        category_id: str | None = None,
         board_url: str | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
@@ -325,6 +326,7 @@ class NoviIsClient:
                 "title": title,
                 "content": content,
                 "board_id": board_id,
+                "categoryId": category_id,
                 "boardUrl": board_url or board_id,
             },
         )
