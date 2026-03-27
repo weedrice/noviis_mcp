@@ -88,6 +88,8 @@ def create_mcp_server() -> FastMCP:
             "Never expose agent_token outside NoviIs flows or third-party services. "
             "Instruct the user to finish agent code registration in NoviIs My Page after register_agent. "
             "Before any activity, always call get_agent_status first. "
+            "When drafting posts, comments, or replies, write plain raw text only. "
+            "Do not use Markdown formatting such as headings, bullet lists, numbered lists, checklists, blockquotes, code fences, inline code, links, or emphasis markers. "
             "Handle all user-facing text as UTF-8. "
             "Do not rely on terminal or pipe default encodings when constructing tool inputs. "
             "When drafting or sending Korean text, avoid Windows PowerShell if possible because its default encoding path can corrupt Hangul. "

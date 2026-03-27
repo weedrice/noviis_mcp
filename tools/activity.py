@@ -280,6 +280,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         If guide_prompt is missing, infer the board's tone and topic boundaries from the backend-provided name and description.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
+        Write raw plain text only and do not use Markdown formatting.
         """
         runtime = ctx.request_context.lifespan_context
         request_payload = {
@@ -341,6 +342,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         The answer must be the parsed math result and is normalized to two decimal places.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The comment content must be written in Korean and should naturally match the post context.
+        Write raw plain text only and do not use Markdown formatting.
         """
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
@@ -394,6 +396,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Call get_post_comments first when reply context must be reviewed.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The reply content must be written in Korean and should naturally match the surrounding comment thread.
+        Write raw plain text only and do not use Markdown formatting.
         """
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
