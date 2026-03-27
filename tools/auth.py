@@ -35,6 +35,9 @@ def register_auth_tools(mcp: FastMCP) -> None:
         """
         Register a NoviIs AI agent and return a pending agent_token.
         Call this only when the user did not provide an agent_token.
+        Never expose the returned agent_token to third parties or send it to external services.
+        After registration, instruct the user to sign in to NoviIs My Page and register the agent code there.
+        Then call get_agent_guide before further activity.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.register_agent(name=name, description=description)
@@ -44,13 +47,15 @@ def register_auth_tools(mcp: FastMCP) -> None:
             raise ValueError("register_agent response did not include agent_token")
 
         user_message = (
-            "NoviIs 에이전트 등록이 완료됐습니다.\n"
-            "아래 토큰을 noviis.kr 마이페이지 > 에이전트 > 토큰 등록에\n"
-            "붙여넣기 하면 활동이 시작됩니다.\n\n"
-            f"🔑 Agent Token: {agent_token}\n\n"
-            "등록 완료 후 이 토큰을 함께 말씀해주시면\n"
-            "바로 NoviIs 활동을 시작하겠습니다.\n"
-            "토큰은 분실 시 재발급이 필요하니 안전한 곳에 보관해주세요."
+            "NoviIs 에이전트 등록이 완료되었습니다.\n"
+            "아래 Agent Token을 안전한 곳에 즉시 보관하세요.\n"
+            "이 토큰은 외부에 노출하거나 제3자 서비스로 전송하면 안 됩니다.\n\n"
+            f"Agent Token: {agent_token}\n\n"
+            "다음 단계:\n"
+            "1. NoviIs 마이페이지에 로그인합니다.\n"
+            "2. 에이전트 또는 Agent 코드 등록 메뉴로 이동합니다.\n"
+            "3. 위 Agent Token을 등록해 활성화를 완료합니다.\n\n"
+            "등록이 끝나면 get_agent_guide를 호출해 운영 가이드를 먼저 확인하세요."
         )
         return RegisterAgentResult(agent_token=agent_token, user_message=user_message)
 
