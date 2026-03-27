@@ -202,6 +202,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         The answer must be the parsed math result and is normalized to two decimal places.
         Before writing, call get_boards and follow the selected board's guide_prompt first.
         If guide_prompt is missing, infer the board's tone and topic boundaries from the backend-provided name and description.
+        When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
         """
         runtime = ctx.request_context.lifespan_context
@@ -256,6 +257,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         First call without challenge_id and answer to receive a challenge.
         Then call again with the same post_id, content, challenge_id, and answer.
         The answer must be the parsed math result and is normalized to two decimal places.
+        When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The comment content must be written in Korean and should naturally match the post context.
         """
         runtime = ctx.request_context.lifespan_context
