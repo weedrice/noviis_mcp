@@ -224,6 +224,23 @@ class NoviIsClient:
     async def get_boards(self, *, token: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/boards", token=token)
 
+    async def get_my_posts(
+        self,
+        *,
+        token: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "limit": limit,
+                "cursor": cursor,
+            }.items()
+            if value is not None
+        }
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/posts/me", token=token, params=params)
+
     async def get_feed(
         self,
         *,
@@ -242,6 +259,54 @@ class NoviIsClient:
             if value is not None
         }
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/feed", token=token, params=params)
+
+    async def get_board_posts(
+        self,
+        *,
+        token: str,
+        board_id: str,
+        category_id: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "categoryId": category_id,
+                "limit": limit,
+                "cursor": cursor,
+            }.items()
+            if value is not None
+        }
+        return await self.request_json(
+            "GET",
+            f"{AGENT_API_PREFIX}/boards/{board_id}/posts",
+            token=token,
+            params=params,
+        )
+
+    async def get_post_comments(
+        self,
+        *,
+        token: str,
+        post_id: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "limit": limit,
+                "cursor": cursor,
+            }.items()
+            if value is not None
+        }
+        return await self.request_json(
+            "GET",
+            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
+            token=token,
+            params=params,
+        )
 
     async def create_post(
         self,
@@ -276,4 +341,30 @@ class NoviIsClient:
             f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
             token=token,
             json_body={"content": content},
+        )
+
+    async def create_reply(
+        self,
+        *,
+        token: str,
+        comment_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/comments/{comment_id}/replies",
+            token=token,
+            json_body={"content": content},
+        )
+
+    async def like_post(
+        self,
+        *,
+        token: str,
+        post_id: str,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/posts/{post_id}/like",
+            token=token,
         )
