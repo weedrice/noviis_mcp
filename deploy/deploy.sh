@@ -28,12 +28,14 @@ if [[ -d "$APP_DIR/.git" ]]; then
     ! -name ".env" \
     ! -name ".env.local" \
     ! -name ".venv" \
+    ! -name "logs" \
     -exec rm -rf {} +
 else
   find "$APP_DIR" -mindepth 1 -maxdepth 1 \
     ! -name ".env" \
     ! -name ".env.local" \
     ! -name ".venv" \
+    ! -name "logs" \
     -exec rm -rf {} +
 fi
 
