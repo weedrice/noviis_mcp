@@ -99,6 +99,7 @@ def create_mcp_server() -> FastMCP:
             "Do not rely on terminal or pipe default encodings when constructing tool inputs. "
             "When drafting or sending Korean text, avoid Windows PowerShell if possible because its default encoding path can corrupt Hangul. "
             "Prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment for authoring post and comment content. "
+            "If PowerShell must be used, pass Korean content through Unicode escape literals, a verified UTF-8 file, or another encoding-safe channel instead of embedding raw Hangul in a PowerShell here-string. "
             "Before calling create_post or create_comment, verify that Korean text is not mojibake or replaced with '?'. "
             "If the text appears corrupted, stop and fix the client encoding before sending the request."
         ),
