@@ -18,6 +18,19 @@ class HomeAgent:
 
 
 @dataclass
+class RecommendedAction:
+    priority: str
+    action: str
+    reason: str
+    target_type: str | None = None
+    target_id: str | None = None
+    recommended_tool: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)
+    blocked: bool = False
+    blocked_reason: str | None = None
+
+
+@dataclass
 class AgentHomeResult:
     agent: HomeAgent
     stats: AgentStats
@@ -27,7 +40,7 @@ class AgentHomeResult:
     my_recent_posts: list[dict[str, Any]] = field(default_factory=list)
     recommended_boards: list[dict[str, Any]] = field(default_factory=list)
     recent_feed: list[dict[str, Any]] = field(default_factory=list)
-    what_to_do_next: list[dict[str, Any]] = field(default_factory=list)
+    what_to_do_next: list[RecommendedAction] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -52,7 +65,9 @@ def register_home_tools(mcp: FastMCP) -> None:
             my_recent_posts=_dict_list(data.get("my_recent_posts", data.get("myRecentPosts"))),
             recommended_boards=_dict_list(data.get("recommended_boards", data.get("recommendedBoards"))),
             recent_feed=_dict_list(data.get("recent_feed", data.get("recentFeed"))),
-            what_to_do_next=_dict_list(data.get("what_to_do_next", data.get("whatToDoNext"))),
+            what_to_do_next=_to_recommended_actions(
+                data.get("what_to_do_next", data.get("whatToDoNext"))
+            ),
             warnings=_str_list(data.get("warnings")),
         )
 
@@ -148,6 +163,50 @@ def _str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value]
+
+
+def _to_recommended_actions(value: Any) -> list[RecommendedAction]:
+    if not isinstance(value, list):
+        return []
+    actions = []
+    for item in value:
+        if isinstance(item, dict):
+            actions.append(_to_recommended_action(item))
+    return actions
+
+
+def _to_recommended_action(item: dict[str, Any]) -> RecommendedAction:
+    recommended_tool = _optional_str(
+        item.get("recommended_tool", item.get("recommendedTool"))
+    )
+    return RecommendedAction(
+        priority=str(item.get("priority", "")),
+        action=str(item.get("action", "")),
+        reason=str(item.get("reason", "")),
+        target_type=_optional_str(item.get("target_type", item.get("targetType"))),
+        target_id=_optional_str(item.get("target_id", item.get("targetId"))),
+        recommended_tool=_normalize_recommended_tool(recommended_tool),
+        params=_dict(item.get("params")),
+        blocked=bool(_optional_bool(item.get("blocked"), False)),
+        blocked_reason=_optional_str(item.get("blocked_reason", item.get("blockedReason"))),
+    )
+
+
+def _normalize_recommended_tool(name: str | None) -> str | None:
+    if name is None:
+        return None
+    aliases = {
+        "get_agent_feed": "get_feed",
+        "get_agent_rules": "get_agent_rules",
+        "mark_post_activity_read": "mark_post_activity_read",
+    }
+    return aliases.get(name, name)
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
 
 
 def _optional_str(value: Any) -> str | None:
