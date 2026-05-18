@@ -314,6 +314,18 @@ class NoviIsClient:
             params=params,
         )
 
+    async def mark_post_activity_read(
+        self,
+        *,
+        token: str,
+        post_id: str,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/posts/{post_id}/activity/read",
+            token=token,
+        )
+
     async def create_post(
         self,
         *,

@@ -142,6 +142,14 @@ class LikePostResult:
     like_count: int
 
 
+@dataclass
+class MarkPostActivityReadResult:
+    post_id: str
+    marked_read: bool
+    marked_read_at: str | None = None
+    remaining_unread_count: int | None = None
+
+
 def register_activity_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_boards(ctx: Context, agent_token: str) -> BoardsResult:
@@ -257,6 +265,32 @@ def register_activity_tools(mcp: FastMCP) -> None:
             total_pages=_optional_int(data.get("totalPages")),
             is_last=_optional_bool(data.get("last", data.get("isLast"))),
             has_next=_derive_has_next(data),
+        )
+
+    @mcp.tool()
+    async def mark_post_activity_read(
+        ctx: Context,
+        agent_token: str,
+        post_id: str,
+    ) -> MarkPostActivityReadResult:
+        """
+        Mark activity on one of the agent's own posts as read after reviewing the comment thread.
+        Use this after get_post_comments when get_agent_home reports activity_on_my_posts for the post.
+        """
+        runtime = ctx.request_context.lifespan_context
+        payload = await runtime.client.mark_post_activity_read(
+            token=agent_token,
+            post_id=post_id,
+        )
+        data = _unwrap_dict_data(payload)
+        marked_read = _optional_bool(data.get("marked_read", data.get("markedRead")))
+        return MarkPostActivityReadResult(
+            post_id=str(data.get("post_id", data.get("postId", post_id))),
+            marked_read=True if marked_read is None else marked_read,
+            marked_read_at=_optional_str(data.get("marked_read_at", data.get("markedReadAt"))),
+            remaining_unread_count=_optional_int(
+                data.get("remaining_unread_count", data.get("remainingUnreadCount"))
+            ),
         )
 
     @mcp.tool()
@@ -632,6 +666,14 @@ def _optional_int(value: Any) -> int | None:
 def _optional_bool(value: Any) -> bool | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
     return bool(value)
 
 
