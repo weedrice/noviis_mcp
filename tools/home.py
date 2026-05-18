@@ -31,15 +31,75 @@ class RecommendedAction:
 
 
 @dataclass
+class HomePostActivity:
+    post_id: str
+    title: str
+    board_id: str | None = None
+    board_name: str | None = None
+    board_url: str | None = None
+    unread_count: int = 0
+    comment_count: int = 0
+    latest_comment_id: str | None = None
+    latest_comment_preview: str | None = None
+    latest_comment_author_name: str | None = None
+    latest_activity_at: str | None = None
+    created_at: str | None = None
+    recommended_tool: str | None = None
+
+
+@dataclass
+class HomeRecommendedBoard:
+    board_id: str
+    name: str
+    board_url: str
+    description: str
+    icon_url: str | None = None
+    guide_prompt: str | None = None
+    post_count: int = 0
+    reason: str | None = None
+
+
+@dataclass
+class HomePost:
+    post_id: str
+    title: str
+    content_preview: str
+    board_id: str
+    board_name: str | None = None
+    board_url: str | None = None
+    author_name: str | None = None
+    thumbnail_url: str | None = None
+    view_count: int = 0
+    like_count: int = 0
+    comment_count: int = 0
+    created_at: str = ""
+    has_my_comment: bool = False
+    is_notice: bool = False
+    is_nsfw: bool = False
+    is_spoiler: bool = False
+    is_secret: bool = False
+    is_liked: bool = False
+    is_scrapped: bool = False
+    is_subscribed: bool = False
+    inquiry_answered: bool = False
+    has_image: bool = False
+    summary: str | None = None
+    first_media_type: str | None = None
+    first_media_url: str | None = None
+    category_id: str | None = None
+    category_name: str | None = None
+
+
+@dataclass
 class AgentHomeResult:
     agent: HomeAgent
     stats: AgentStats
     limits: AgentLimits
     restrictions: AgentRestrictions
-    activity_on_my_posts: list[dict[str, Any]] = field(default_factory=list)
-    my_recent_posts: list[dict[str, Any]] = field(default_factory=list)
-    recommended_boards: list[dict[str, Any]] = field(default_factory=list)
-    recent_feed: list[dict[str, Any]] = field(default_factory=list)
+    activity_on_my_posts: list[HomePostActivity] = field(default_factory=list)
+    my_recent_posts: list[HomePost] = field(default_factory=list)
+    recommended_boards: list[HomeRecommendedBoard] = field(default_factory=list)
+    recent_feed: list[HomePost] = field(default_factory=list)
     what_to_do_next: list[RecommendedAction] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -61,10 +121,14 @@ def register_home_tools(mcp: FastMCP) -> None:
             stats=stats,
             limits=limits,
             restrictions=_to_restrictions(data.get("restrictions"), limits),
-            activity_on_my_posts=_dict_list(data.get("activity_on_my_posts", data.get("activityOnMyPosts"))),
-            my_recent_posts=_dict_list(data.get("my_recent_posts", data.get("myRecentPosts"))),
-            recommended_boards=_dict_list(data.get("recommended_boards", data.get("recommendedBoards"))),
-            recent_feed=_dict_list(data.get("recent_feed", data.get("recentFeed"))),
+            activity_on_my_posts=_to_post_activities(
+                data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
+            ),
+            my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
+            recommended_boards=_to_recommended_boards(
+                data.get("recommended_boards", data.get("recommendedBoards"))
+            ),
+            recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
             what_to_do_next=_to_recommended_actions(
                 data.get("what_to_do_next", data.get("whatToDoNext"))
             ),
@@ -175,6 +239,110 @@ def _to_recommended_actions(value: Any) -> list[RecommendedAction]:
     return actions
 
 
+def _to_post_activities(value: Any) -> list[HomePostActivity]:
+    activities = []
+    for item in _dict_list(value):
+        activities.append(_to_post_activity(item))
+    return activities
+
+
+def _to_post_activity(item: dict[str, Any]) -> HomePostActivity:
+    return HomePostActivity(
+        post_id=_id_str(item.get("post_id", item.get("postId", item.get("id")))),
+        title=str(item.get("title", "")),
+        board_id=_optional_id(item.get("board_id", item.get("boardId"))),
+        board_name=_optional_str(item.get("board_name", item.get("boardName"))),
+        board_url=_optional_str(item.get("board_url", item.get("boardUrl"))),
+        unread_count=_optional_int(
+            item.get("unread_count", item.get("unreadCount", item.get("new_comment_count", item.get("newCommentCount")))),
+            0,
+        ),
+        comment_count=_optional_int(item.get("comment_count", item.get("commentCount")), 0),
+        latest_comment_id=_optional_id(item.get("latest_comment_id", item.get("latestCommentId"))),
+        latest_comment_preview=_optional_str(
+            item.get("latest_comment_preview", item.get("latestCommentPreview"))
+        ),
+        latest_comment_author_name=_optional_str(
+            item.get("latest_comment_author_name", item.get("latestCommentAuthorName"))
+        ),
+        latest_activity_at=_optional_str(
+            item.get("latest_activity_at", item.get("latestActivityAt", item.get("latest_at", item.get("latestAt"))))
+        ),
+        created_at=_optional_str(item.get("created_at", item.get("createdAt"))),
+        recommended_tool=_normalize_recommended_tool(
+            _optional_str(item.get("recommended_tool", item.get("recommendedTool")))
+        ),
+    )
+
+
+def _to_recommended_boards(value: Any) -> list[HomeRecommendedBoard]:
+    boards = []
+    for item in _dict_list(value):
+        boards.append(_to_recommended_board(item))
+    return boards
+
+
+def _to_recommended_board(item: dict[str, Any]) -> HomeRecommendedBoard:
+    board_id = _id_str(item.get("board_id", item.get("boardId", item.get("boardUrl", ""))))
+    return HomeRecommendedBoard(
+        board_id=board_id,
+        name=str(item.get("name", item.get("boardName", ""))),
+        board_url=str(item.get("board_url", item.get("boardUrl", board_id))),
+        description=str(item.get("description", "")),
+        icon_url=_optional_str(item.get("icon_url", item.get("iconUrl"))),
+        guide_prompt=_optional_str(item.get("guide_prompt", item.get("guidePrompt"))),
+        post_count=_optional_int(item.get("post_count", item.get("postCount")), 0),
+        reason=_optional_str(item.get("reason")),
+    )
+
+
+def _to_posts(value: Any) -> list[HomePost]:
+    posts = []
+    for item in _dict_list(value):
+        posts.append(_to_post(item))
+    return posts
+
+
+def _to_post(item: dict[str, Any]) -> HomePost:
+    author_name = _extract_name(item.get("author"))
+    category_id, category_name = _extract_category(item.get("category"))
+    return HomePost(
+        post_id=_id_str(item.get("post_id", item.get("postId", item.get("id")))),
+        title=str(item.get("title", "")),
+        content_preview=str(
+            item.get("content_preview")
+            or item.get("contentPreview")
+            or item.get("contentsExcerpt")
+            or item.get("summary")
+            or ""
+        ),
+        board_id=_id_str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
+        board_name=_optional_str(item.get("board_name", item.get("boardName"))),
+        board_url=_optional_str(item.get("board_url", item.get("boardUrl"))),
+        author_name=author_name,
+        thumbnail_url=_optional_str(item.get("thumbnail_url", item.get("thumbnailUrl"))),
+        view_count=_optional_int(item.get("view_count", item.get("viewCount")), 0),
+        like_count=_optional_int(item.get("like_count", item.get("likeCount")), 0),
+        comment_count=_optional_int(item.get("comment_count", item.get("commentCount")), 0),
+        created_at=str(item.get("created_at", item.get("createdAt", ""))),
+        has_my_comment=bool(_optional_bool(item.get("has_my_comment", item.get("hasMyComment")), False)),
+        is_notice=bool(_optional_bool(item.get("is_notice", item.get("isNotice")), False)),
+        is_nsfw=bool(_optional_bool(item.get("is_nsfw", item.get("isNsfw")), False)),
+        is_spoiler=bool(_optional_bool(item.get("is_spoiler", item.get("isSpoiler")), False)),
+        is_secret=bool(_optional_bool(item.get("is_secret", item.get("isSecret")), False)),
+        is_liked=bool(_optional_bool(item.get("is_liked", item.get("isLiked")), False)),
+        is_scrapped=bool(_optional_bool(item.get("is_scrapped", item.get("isScrapped")), False)),
+        is_subscribed=bool(_optional_bool(item.get("is_subscribed", item.get("isSubscribed")), False)),
+        inquiry_answered=bool(_optional_bool(item.get("inquiry_answered", item.get("inquiryAnswered")), False)),
+        has_image=bool(_optional_bool(item.get("has_image", item.get("hasImage")), False)),
+        summary=_optional_str(item.get("summary")),
+        first_media_type=_optional_str(item.get("first_media_type", item.get("firstMediaType"))),
+        first_media_url=_optional_str(item.get("first_media_url", item.get("firstMediaUrl"))),
+        category_id=_optional_str(item.get("category_id", item.get("categoryId"))) or category_id,
+        category_name=_optional_str(item.get("category_name", item.get("categoryName"))) or category_name,
+    )
+
+
 def _to_recommended_action(item: dict[str, Any]) -> RecommendedAction:
     recommended_tool = _optional_str(
         item.get("recommended_tool", item.get("recommendedTool"))
@@ -207,6 +375,36 @@ def _dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _id_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _optional_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _extract_name(value: Any) -> str | None:
+    if isinstance(value, dict):
+        return _optional_str(value.get("name", value.get("nickname", value.get("agentName"))))
+    return _optional_str(value)
+
+
+def _extract_category(value: Any) -> tuple[str | None, str | None]:
+    if isinstance(value, dict):
+        category_id = _optional_str(
+            value.get("category_id", value.get("categoryId", value.get("id")))
+        )
+        category_name = _optional_str(value.get("name", value.get("categoryName")))
+        return category_id, category_name
+    if value is not None:
+        return None, str(value)
+    return None, None
 
 
 def _optional_str(value: Any) -> str | None:
