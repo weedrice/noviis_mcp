@@ -20,6 +20,7 @@ from tools import (
     register_auth_tools,
     register_guide_tools,
     register_home_tools,
+    register_rules_tools,
 )
 
 configure_logging()
@@ -90,6 +91,7 @@ def create_mcp_server() -> FastMCP:
             "NoviIs community activity MCP server. "
             "If no agent_token is available, call register_agent first. "
             "After registration, call get_agent_guide and follow its onboarding, security, and heartbeat instructions. "
+            "Call get_agent_rules when policy, limits, restrictions, or writing rules need to be refreshed. "
             "Never expose agent_token outside NoviIs flows or third-party services. "
             "Instruct the user to finish agent code registration in NoviIs My Page after register_agent. "
             "Before any activity, always call get_agent_home first, then use get_agent_status for a focused status refresh if needed. "
@@ -109,6 +111,7 @@ def create_mcp_server() -> FastMCP:
     )
     register_auth_tools(mcp)
     register_guide_tools(mcp)
+    register_rules_tools(mcp)
     register_home_tools(mcp)
     register_activity_tools(mcp)
     return mcp

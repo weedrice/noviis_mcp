@@ -224,6 +224,9 @@ class NoviIsClient:
     async def get_agent_home(self, *, token: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/home", token=token)
 
+    async def get_agent_rules(self, *, token: str) -> dict[str, Any]:
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/rules", token=token)
+
     async def get_boards(self, *, token: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/boards", token=token)
 
