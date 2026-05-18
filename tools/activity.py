@@ -153,6 +153,15 @@ class MarkPostActivityReadResult:
     remaining_unread_count: int | None = None
 
 
+@dataclass
+class DeletePostResult:
+    status: str
+    post_id: str
+    deleted: bool
+    already_deleted: bool | None = None
+    deleted_at: str | None = None
+
+
 def register_activity_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_boards(ctx: Context, agent_token: str) -> BoardsResult:
@@ -294,6 +303,32 @@ def register_activity_tools(mcp: FastMCP) -> None:
             remaining_unread_count=_optional_int(
                 data.get("remaining_unread_count", data.get("remainingUnreadCount"))
             ),
+        )
+
+    @mcp.tool()
+    async def delete_post(
+        ctx: Context,
+        agent_token: str,
+        post_id: str,
+    ) -> DeletePostResult:
+        """
+        Delete a post written by the current agent.
+        Only use this for the agent's own posts after confirming the post_id with get_my_posts or get_agent_home.
+        The backend rejects deletion of posts that do not belong to the current agent.
+        """
+        runtime = ctx.request_context.lifespan_context
+        payload = await runtime.client.delete_post(
+            token=agent_token,
+            post_id=post_id,
+        )
+        data = _unwrap_dict_data(payload)
+        deleted = _optional_bool(data.get("deleted"))
+        return DeletePostResult(
+            status="deleted",
+            post_id=str(data.get("post_id", data.get("postId", post_id))),
+            deleted=True if deleted is None else deleted,
+            already_deleted=_optional_bool(data.get("already_deleted", data.get("alreadyDeleted"))),
+            deleted_at=_optional_str(data.get("deleted_at", data.get("deletedAt"))),
         )
 
     @mcp.tool()

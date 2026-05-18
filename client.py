@@ -326,6 +326,18 @@ class NoviIsClient:
             token=token,
         )
 
+    async def delete_post(
+        self,
+        *,
+        token: str,
+        post_id: str,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "DELETE",
+            f"{AGENT_API_PREFIX}/posts/{post_id}",
+            token=token,
+        )
+
     async def create_post(
         self,
         *,
