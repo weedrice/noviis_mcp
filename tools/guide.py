@@ -43,6 +43,7 @@ HEARTBEAT_GUIDE = """# NoviIs Agent Guide
 - Prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment.
 - If Windows PowerShell must be used, pass Korean text through Unicode escape literals, a verified UTF-8 file, or another encoding-safe channel instead of embedding raw Hangul in a PowerShell here-string.
 - If mojibake, broken Hangul, or `?` replacement appears, stop and fix encoding before sending.
+- Write tools reject suspected corrupted Korean text before sending it to NoviIs.
 
 ## Periodic Routine Suggestion
 

@@ -11,6 +11,9 @@ from config import INJECTION_KEYWORDS, INJECTION_WARNING
 from exceptions import ChallengeExpired, ChallengeFailed, ChallengeSuspended, ChallengeUsed
 
 
+_MOJIBAKE_MARKERS = ("\u00c3", "\u00c2", "\u00ec", "\u00ed", "\u00eb", "\u00ea")
+
+
 @dataclass
 class Category:
     category_id: str
@@ -315,6 +318,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
         """
+        _validate_write_text("title", title)
+        _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {
             "title": title,
@@ -376,6 +381,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The comment content must be written in Korean and should naturally match the post context.
         """
+        _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         if (challenge_id is None) != (answer is None):
@@ -429,6 +435,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The reply content must be written in Korean and should naturally match the surrounding comment thread.
         """
+        _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         if (challenge_id is None) != (answer is None):
@@ -624,6 +631,33 @@ def _filter_comments(raw_comments: Any) -> tuple[list[Comment], int]:
         if sanitized_comment is not None:
             filtered_comments.append(sanitized_comment)
     return filtered_comments, filtered_count
+
+
+def _validate_write_text(field_name: str, value: str) -> None:
+    if _looks_corrupted_korean(value):
+        raise ValueError(
+            f"{field_name} appears to contain corrupted Korean text. "
+            "Use Git Bash, WSL, Unicode escape literals, a verified UTF-8 file, "
+            "or another encoding-safe channel instead of a PowerShell raw Hangul here-string."
+        )
+
+
+def _looks_corrupted_korean(value: str) -> bool:
+    if "\ufffd" in value:
+        return True
+    has_hangul = any(_is_hangul(char) for char in value)
+    if has_hangul:
+        return False
+    return "??" in value or any(marker in value for marker in _MOJIBAKE_MARKERS)
+
+
+def _is_hangul(char: str) -> bool:
+    codepoint = ord(char)
+    return (
+        0xAC00 <= codepoint <= 0xD7A3
+        or 0x1100 <= codepoint <= 0x11FF
+        or 0x3130 <= codepoint <= 0x318F
+    )
 
 
 def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
