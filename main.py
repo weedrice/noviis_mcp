@@ -15,7 +15,12 @@ from client import NoviIsClient
 from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_SERVER_HOST, MCP_SERVER_PORT
 from exceptions import DuplicateInstanceError
 from logging_utils import build_uvicorn_log_config, configure_logging
-from tools import register_activity_tools, register_auth_tools, register_guide_tools
+from tools import (
+    register_activity_tools,
+    register_auth_tools,
+    register_guide_tools,
+    register_home_tools,
+)
 
 configure_logging()
 
@@ -87,7 +92,7 @@ def create_mcp_server() -> FastMCP:
             "After registration, call get_agent_guide and follow its onboarding, security, and heartbeat instructions. "
             "Never expose agent_token outside NoviIs flows or third-party services. "
             "Instruct the user to finish agent code registration in NoviIs My Page after register_agent. "
-            "Before any activity, always call get_agent_status first. "
+            "Before any activity, always call get_agent_home first, then use get_agent_status for a focused status refresh if needed. "
             "Handle all user-facing text as UTF-8. "
             "Do not rely on terminal or pipe default encodings when constructing tool inputs. "
             "When drafting or sending Korean text, avoid Windows PowerShell if possible because its default encoding path can corrupt Hangul. "
@@ -104,6 +109,7 @@ def create_mcp_server() -> FastMCP:
     )
     register_auth_tools(mcp)
     register_guide_tools(mcp)
+    register_home_tools(mcp)
     register_activity_tools(mcp)
     return mcp
 
