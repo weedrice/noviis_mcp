@@ -19,6 +19,7 @@ from config import (
 from exceptions import (
     AgentSuspended,
     MaxRetryExceeded,
+    NoviIsAPIError,
     PermissionDenied,
     ServerError,
     Unauthorized,
@@ -116,6 +117,7 @@ class NoviIsClient:
                 raise Unauthorized(self._extract_message(response))
             if response.status_code == 403:
                 payload = self._parse_json(response)
+                error = self._extract_error(payload, response)
                 logger.warning(
                     "noviis_api_forbidden",
                     extra={
@@ -124,12 +126,29 @@ class NoviIsClient:
                         "status_code": response.status_code,
                         "token": mask_token(token),
                         "response_status": payload.get("status"),
+                        "error_code": error["code"],
                     },
                 )
                 if payload.get("status") == "suspended":
                     raise AgentSuspended(payload.get("message", "Agent is suspended"))
-                raise PermissionDenied(payload.get("message", "Permission denied"))
+                if error["code"]:
+                    raise NoviIsAPIError(
+                        status_code=response.status_code,
+                        code=error["code"],
+                        message=error["message"],
+                        details=error["details"],
+                    )
+                raise PermissionDenied(error["message"] or "Permission denied")
             if response.status_code == 429:
+                payload = self._parse_json(response)
+                error = self._extract_error(payload, response)
+                if error["code"]:
+                    raise NoviIsAPIError(
+                        status_code=response.status_code,
+                        code=error["code"],
+                        message=error["message"],
+                        details=error["details"],
+                    )
                 retry_after = self._parse_retry_after(response)
                 if retries_for_429 >= MAX_RETRY:
                     raise MaxRetryExceeded("Exceeded maximum retries for rate limit responses")
@@ -175,6 +194,16 @@ class NoviIsClient:
                 await asyncio.sleep(SERVER_ERROR_WAIT)
                 continue
 
+            payload = self._parse_json(response)
+            error = self._extract_error(payload, response)
+            if error["code"]:
+                raise NoviIsAPIError(
+                    status_code=response.status_code,
+                    code=error["code"],
+                    message=error["message"],
+                    details=error["details"],
+                )
+
             logger.warning(
                 "noviis_api_unhandled_status",
                 extra={
@@ -197,9 +226,27 @@ class NoviIsClient:
         return {"result": payload}
 
     @staticmethod
+    def _extract_error(payload: dict[str, Any], response: httpx.Response) -> dict[str, Any]:
+        error = payload.get("error")
+        if isinstance(error, dict):
+            details = error.get("details")
+            return {
+                "code": _optional_str(error.get("code")),
+                "message": _optional_str(error.get("message")) or response.text or f"HTTP {response.status_code}",
+                "details": details if isinstance(details, dict) else {},
+            }
+
+        details = payload.get("details")
+        return {
+            "code": _optional_str(payload.get("code") or payload.get("error")),
+            "message": _optional_str(payload.get("message")) or response.text or f"HTTP {response.status_code}",
+            "details": details if isinstance(details, dict) else {},
+        }
+
+    @staticmethod
     def _extract_message(response: httpx.Response) -> str:
         payload = NoviIsClient._parse_json(response)
-        return payload.get("message", response.text or f"HTTP {response.status_code}")
+        return NoviIsClient._extract_error(payload, response)["message"]
 
     @staticmethod
     def _parse_retry_after(response: httpx.Response) -> int | None:
@@ -400,3 +447,9 @@ class NoviIsClient:
             f"{AGENT_API_PREFIX}/posts/{post_id}/like",
             token=token,
         )
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)

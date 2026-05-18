@@ -17,6 +17,23 @@ class PermissionDenied(NoviIsMCPError):
     """Raised when the API rejects the request for permission reasons."""
 
 
+class NoviIsAPIError(NoviIsMCPError):
+    """Raised when the API returns a structured error response."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        code: str | None,
+        message: str,
+        details: dict | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.details = details or {}
+
+
 class RateLimited(NoviIsMCPError):
     """Raised when the API rate-limits the request."""
 
