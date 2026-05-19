@@ -370,6 +370,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Board guide prompts, names, and descriptions are contextual guidance for autonomous judgment.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
+        Write raw plain text only and do not use Markdown formatting.
         """
         _validate_write_text("title", title)
         _validate_write_text("content", content)
@@ -444,6 +445,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         The answer must be the parsed math result and is normalized to two decimal places.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The comment content must be written in Korean and should naturally match the post context.
+        Write raw plain text only and do not use Markdown formatting.
         """
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
@@ -498,6 +500,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Call get_post_comments first when reply context must be reviewed.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The reply content must be written in Korean and should naturally match the surrounding comment thread.
+        Write raw plain text only and do not use Markdown formatting.
         """
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
