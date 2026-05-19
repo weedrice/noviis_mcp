@@ -83,6 +83,26 @@ class NoteSummary:
 
 
 @dataclass
+class HeartbeatRecommendation:
+    recommended_interval_seconds: int = 1800
+    urgency: str = "normal"
+    reasons: list[str] = field(default_factory=list)
+    primary_tool: str = "get_agent_home"
+    report_style: str = "silent_ok_or_short_summary"
+    next_check_after: str | None = None
+
+
+@dataclass
+class HumanEscalation:
+    type: str
+    summary: str
+    reason: str | None = None
+    severity: str = "medium"
+    target_type: str | None = None
+    target_id: str | None = None
+
+
+@dataclass
 class HomePostActivity:
     post_id: str
     title: str
@@ -166,6 +186,8 @@ class AgentHomeResult:
     note_summary: NoteSummary | None = None
     opportunities: list[Opportunity] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    heartbeat: HeartbeatRecommendation = field(default_factory=HeartbeatRecommendation)
+    human_escalations: list[HumanEscalation] = field(default_factory=list)
 
 
 def register_home_tools(mcp: FastMCP) -> None:
@@ -184,24 +206,45 @@ def register_home_tools(mcp: FastMCP) -> None:
 def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
     data = _unwrap_data(payload)
     _require_agent_home_contract(data)
+    agent = _to_agent(data.get("agent"), data)
+    usage = _to_usage(data.get("usage"))
+    capabilities = _to_capabilities(data.get("capabilities"))
+    hard_constraints = _to_hard_constraints(data.get("hard_constraints", data.get("hardConstraints")))
+    activity_on_my_posts = _to_post_activities(
+        data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
+    )
+    note_summary = _to_note_summary(data.get("note_summary", data.get("noteSummary")))
+    warnings = _str_list(data.get("warnings"))
     return AgentHomeResult(
-        agent=_to_agent(data.get("agent"), data),
-        usage=_to_usage(data.get("usage")),
-        capabilities=_to_capabilities(data.get("capabilities")),
-        hard_constraints=_to_hard_constraints(data.get("hard_constraints", data.get("hardConstraints"))),
+        agent=agent,
+        usage=usage,
+        capabilities=capabilities,
+        hard_constraints=hard_constraints,
         soft_guidance=_str_list(data.get("soft_guidance", data.get("softGuidance"))),
         style_guidance=_str_list(data.get("style_guidance", data.get("styleGuidance"))),
-        activity_on_my_posts=_to_post_activities(
-            data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
-        ),
+        activity_on_my_posts=activity_on_my_posts,
         my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
         recommended_boards=_to_recommended_boards(
             data.get("recommended_boards", data.get("recommendedBoards"))
         ),
         recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
-        note_summary=_to_note_summary(data.get("note_summary", data.get("noteSummary"))),
+        note_summary=note_summary,
         opportunities=_to_opportunities(data.get("opportunities")),
-        warnings=_str_list(data.get("warnings")),
+        warnings=warnings,
+        heartbeat=_to_heartbeat(
+            data.get("heartbeat"),
+            hard_constraints=hard_constraints,
+            activity_on_my_posts=activity_on_my_posts,
+            note_summary=note_summary,
+            warnings=warnings,
+        ),
+        human_escalations=_to_human_escalations(
+            data.get("human_escalations", data.get("humanEscalations")),
+            agent=agent,
+            hard_constraints=hard_constraints,
+            note_summary=note_summary,
+            warnings=warnings,
+        ),
     )
 
 
@@ -361,6 +404,126 @@ def _to_note_summary(value: Any) -> NoteSummary | None:
             0,
         ),
     )
+
+
+def _to_heartbeat(
+    value: Any,
+    *,
+    hard_constraints: HardConstraints,
+    activity_on_my_posts: list[HomePostActivity],
+    note_summary: NoteSummary | None,
+    warnings: list[str],
+) -> HeartbeatRecommendation:
+    payload = value if isinstance(value, dict) else {}
+    reasons = _str_list(payload.get("reasons"))
+    if any(activity.unread_count > 0 for activity in activity_on_my_posts):
+        reasons.append("activity_on_my_posts")
+    if note_summary and (note_summary.unread_thread_count > 0 or note_summary.unread_note_count > 0):
+        reasons.append("unread_notes")
+    if warnings:
+        reasons.append("warnings")
+    if hard_constraints.suspended:
+        reasons.append("agent_suspended")
+
+    unique_reasons = _dedupe(reasons)
+    urgency = _optional_str(payload.get("urgency"))
+    if not urgency:
+        if hard_constraints.suspended or warnings:
+            urgency = "urgent"
+        elif unique_reasons:
+            urgency = "attention"
+        else:
+            urgency = "normal"
+
+    return HeartbeatRecommendation(
+        recommended_interval_seconds=_optional_int(
+            payload.get("recommended_interval_seconds", payload.get("recommendedIntervalSeconds")),
+            1800,
+        ),
+        urgency=urgency,
+        reasons=unique_reasons,
+        primary_tool=_optional_str(payload.get("primary_tool", payload.get("primaryTool"))) or "get_agent_home",
+        report_style=_optional_str(payload.get("report_style", payload.get("reportStyle"))) or "silent_ok_or_short_summary",
+        next_check_after=_optional_str(payload.get("next_check_after", payload.get("nextCheckAfter"))),
+    )
+
+
+def _to_human_escalations(
+    value: Any,
+    *,
+    agent: HomeAgent,
+    hard_constraints: HardConstraints,
+    note_summary: NoteSummary | None,
+    warnings: list[str],
+) -> list[HumanEscalation]:
+    escalations = [_to_human_escalation(item) for item in _dict_list(value)]
+    if hard_constraints.suspended:
+        escalations.append(
+            HumanEscalation(
+                type="agent_suspended",
+                summary=hard_constraints.reason or "Agent is suspended.",
+                reason="hard_constraint",
+                severity="high",
+                target_type="agent",
+                target_id=agent.name or None,
+            )
+        )
+    if agent.status and agent.status not in {"active", "claimed"}:
+        escalations.append(
+            HumanEscalation(
+                type="agent_status_attention",
+                summary=f"Agent status is {agent.status}.",
+                reason="account_status",
+                severity="medium",
+                target_type="agent",
+                target_id=agent.name or None,
+            )
+        )
+    if note_summary and (note_summary.unread_thread_count > 0 or note_summary.unread_note_count > 0):
+        escalations.append(
+            HumanEscalation(
+                type="unread_notes",
+                summary=(
+                    f"{note_summary.unread_thread_count} unread note thread(s), "
+                    f"{note_summary.unread_note_count} unread note(s)."
+                ),
+                reason="review_notes_for_possible_human_input",
+                severity="medium",
+                target_type="notes",
+            )
+        )
+    for warning in warnings:
+        escalations.append(
+            HumanEscalation(
+                type="warning",
+                summary=warning,
+                reason="operational_warning",
+                severity="medium",
+            )
+        )
+    return escalations
+
+
+def _to_human_escalation(item: dict[str, Any]) -> HumanEscalation:
+    return HumanEscalation(
+        type=str(item.get("type", "")),
+        summary=str(item.get("summary", "")),
+        reason=_optional_str(item.get("reason")),
+        severity=str(item.get("severity", "medium")),
+        target_type=_optional_str(item.get("target_type", item.get("targetType"))),
+        target_id=_optional_str(item.get("target_id", item.get("targetId"))),
+    )
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _dict_list(value: Any) -> list[dict[str, Any]]:
