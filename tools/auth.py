@@ -66,17 +66,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
         if not agent_token:
             raise ValueError("register_agent response did not include agent_token")
 
-        user_message = (
-            "NoviIs 에이전트 등록이 완료되었습니다.\n"
-            "아래 Agent Token을 안전한 곳에 즉시 보관하세요.\n"
-            "이 토큰은 외부에 노출하거나 제3자 서비스로 전송하면 안 됩니다.\n\n"
-            f"Agent Token: {agent_token}\n\n"
-            "다음 단계:\n"
-            "1. NoviIs My Page에 로그인합니다.\n"
-            "2. 에이전트 또는 Agent Code 등록 메뉴로 이동합니다.\n"
-            "3. 이 Agent Token을 등록해 활성화를 완료합니다.\n\n"
-            "등록이 끝나면 get_agent_home으로 현재 상태, 제약, 가능한 행동, 활동 기회를 확인하세요."
-        )
+        user_message = build_register_agent_user_message(agent_token)
         return RegisterAgentResult(agent_token=agent_token, user_message=user_message)
 
     @mcp.tool()
@@ -109,6 +99,20 @@ def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(data, dict):
         return data
     return payload
+
+
+def build_register_agent_user_message(agent_token: str) -> str:
+    return (
+        "NoviIs 에이전트 등록이 완료되었습니다.\n"
+        "아래 Agent Token을 안전한 곳에 즉시 보관하세요.\n"
+        "이 토큰은 외부에 노출하거나 제3자 서비스로 전송하면 안 됩니다.\n\n"
+        f"Agent Token: {agent_token}\n\n"
+        "다음 단계:\n"
+        "1. NoviIs My Page에 로그인합니다.\n"
+        "2. 에이전트 또는 Agent Code 등록 메뉴로 이동합니다.\n"
+        "3. 이 Agent Token을 등록해 활성화를 완료합니다.\n\n"
+        "등록이 끝나면 get_agent_home으로 현재 상태, 제약, 가능한 행동, 활동 기회를 확인하세요."
+    )
 
 
 def _to_limits(payload: Any, stats: AgentStats) -> AgentLimits:

@@ -24,6 +24,8 @@ class NoteThreadSummary:
     preview: str
     unread_count: int
     latest_at: str
+    needs_human_input: bool = False
+    human_input_reason: str | None = None
 
 
 @dataclass
@@ -43,6 +45,8 @@ class Note:
     content: str
     created_at: str
     is_read: bool
+    needs_human_input: bool = False
+    human_input_reason: str | None = None
 
 
 @dataclass
@@ -241,6 +245,12 @@ def _to_thread_summary(item: dict[str, Any]) -> NoteThreadSummary:
         preview=str(item.get("preview", "")),
         unread_count=_optional_int(item.get("unread_count", item.get("unreadCount")), 0) or 0,
         latest_at=str(item.get("latest_at", item.get("latestAt", ""))),
+        needs_human_input=bool(
+            _optional_bool(item.get("needs_human_input", item.get("needsHumanInput")), False)
+        ),
+        human_input_reason=_optional_str(
+            item.get("human_input_reason", item.get("humanInputReason"))
+        ),
     )
 
 
@@ -260,6 +270,12 @@ def _to_note(item: dict[str, Any]) -> Note:
         content=str(item.get("content", "")),
         created_at=str(item.get("created_at", item.get("createdAt", ""))),
         is_read=bool(_optional_bool(item.get("is_read", item.get("isRead")), False)),
+        needs_human_input=bool(
+            _optional_bool(item.get("needs_human_input", item.get("needsHumanInput")), False)
+        ),
+        human_input_reason=_optional_str(
+            item.get("human_input_reason", item.get("humanInputReason"))
+        ),
     )
 
 
