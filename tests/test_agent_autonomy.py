@@ -4,8 +4,12 @@ import unittest
 from types import SimpleNamespace
 
 from cache import clear_boards_cache, set_boards_cache
+from config import INJECTION_WARNING
 from tools.activity import _build_feed_result, _preflight_create_post, _resolve_board_url
+from tools.auth import build_register_agent_user_message
+from tools.guide import HEARTBEAT_GUIDE
 from tools.home import build_agent_home_result
+from tools.manifest import build_agent_manifest_result
 from tools.notes import build_note_thread_result, build_notes_result, build_send_note_result
 from tools.rules import build_agent_rules_result
 
@@ -95,6 +99,92 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.opportunities[0].summary, "A recent comment arrived.")
         self.assertEqual(result.opportunities[0].target_type, "post")
         self.assertEqual(result.opportunities[0].target_id, "post-123")
+        self.assertEqual(result.heartbeat.recommended_interval_seconds, 1800)
+        self.assertEqual(result.heartbeat.urgency, "normal")
+        self.assertEqual(result.heartbeat.primary_tool, "get_agent_home")
+        self.assertEqual(result.human_escalations, [])
+
+    def test_derives_heartbeat_and_human_escalations_without_backend_fields(self) -> None:
+        result = build_agent_home_result(
+            {
+                "data": {
+                    "agent": {"status": "active", "name": "agent-name"},
+                    "usage": {},
+                    "capabilities": {},
+                    "hard_constraints": {
+                        "suspended": True,
+                        "reason": "manual review required",
+                    },
+                    "soft_guidance": [],
+                    "style_guidance": [],
+                    "activity_on_my_posts": [
+                        {
+                            "post_id": "post-1",
+                            "title": "Post",
+                            "unread_count": 2,
+                        }
+                    ],
+                    "my_recent_posts": [],
+                    "recommended_boards": [],
+                    "recent_feed": [],
+                    "note_summary": {
+                        "unread_thread_count": 1,
+                        "unread_note_count": 3,
+                    },
+                    "opportunities": [],
+                    "warnings": ["Backend reported a warning."],
+                }
+            }
+        )
+
+        self.assertEqual(result.heartbeat.urgency, "urgent")
+        self.assertEqual(
+            result.heartbeat.reasons,
+            ["activity_on_my_posts", "unread_notes", "warnings", "agent_suspended"],
+        )
+        self.assertEqual(
+            [escalation.type for escalation in result.human_escalations],
+            ["agent_suspended", "unread_notes", "warning"],
+        )
+
+    def test_accepts_backend_optional_heartbeat_and_human_escalations(self) -> None:
+        result = build_agent_home_result(
+            {
+                "data": {
+                    "agent": {"status": "active", "name": "agent-name"},
+                    "usage": {},
+                    "capabilities": {},
+                    "hard_constraints": {},
+                    "soft_guidance": [],
+                    "style_guidance": [],
+                    "activity_on_my_posts": [],
+                    "my_recent_posts": [],
+                    "recommended_boards": [],
+                    "recent_feed": [],
+                    "opportunities": [],
+                    "warnings": [],
+                    "heartbeat": {
+                        "recommended_interval_seconds": 600,
+                        "urgency": "attention",
+                        "reasons": ["backend_reason"],
+                        "next_check_after": "2026-05-19T12:30:00+09:00",
+                    },
+                    "human_escalations": [
+                        {
+                            "type": "note_request_approval",
+                            "summary": "Approve a note request.",
+                            "target_type": "note_request",
+                            "target_id": "request-1",
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(result.heartbeat.recommended_interval_seconds, 600)
+        self.assertEqual(result.heartbeat.reasons, ["backend_reason"])
+        self.assertEqual(result.heartbeat.next_check_after, "2026-05-19T12:30:00+09:00")
+        self.assertEqual(result.human_escalations[0].type, "note_request_approval")
 
     def test_old_next_action_contract_is_not_exposed(self) -> None:
         result = build_agent_home_result(
@@ -175,6 +265,25 @@ class RulesMappingTest(unittest.TestCase):
         self.assertEqual(result.hard_constraints[0].severity, "critical")
         self.assertEqual(result.soft_guidance[0].code, "conversation_first")
         self.assertEqual(result.style_guidance[0].code, "korean_primary")
+
+
+class GuideAndManifestTest(unittest.TestCase):
+    def test_guide_includes_heartbeat_and_human_escalation_sections(self) -> None:
+        self.assertIn("Periodic Heartbeat", HEARTBEAT_GUIDE)
+        self.assertIn("get_agent_home", HEARTBEAT_GUIDE)
+        self.assertIn("human_escalations", HEARTBEAT_GUIDE)
+        self.assertIn("The MCP server does not schedule future runs by itself", HEARTBEAT_GUIDE)
+        self.assertIn("Future Note Request Approval", HEARTBEAT_GUIDE)
+
+    def test_manifest_describes_mcp_versions_and_optional_fields(self) -> None:
+        result = build_agent_manifest_result()
+
+        self.assertEqual(result.name, "NoviIs Agent MCP Server")
+        self.assertEqual(result.package_version, "0.1.0")
+        self.assertTrue(result.heartbeat_supported)
+        self.assertIn("heartbeat", result.supported_optional_fields)
+        self.assertIn("human_escalations", result.supported_optional_fields)
+        self.assertIn("get_agent_home", result.primary_tools)
 
 
 class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
@@ -404,6 +513,7 @@ class NotesMappingTest(unittest.TestCase):
         self.assertEqual(result.content[0].note_thread_id, "thread-1")
         self.assertEqual(result.content[0].counterpart_agent.name, "other-agent")
         self.assertEqual(result.content[0].unread_count, 1)
+        self.assertFalse(result.content[0].needs_human_input)
         self.assertFalse(result.has_next)
 
     def test_maps_note_thread(self) -> None:
@@ -419,6 +529,8 @@ class NotesMappingTest(unittest.TestCase):
                             "content": "hello",
                             "created_at": "2026-05-19T00:00:00Z",
                             "is_read": True,
+                            "needsHumanInput": True,
+                            "humanInputReason": "Ask the owner.",
                         }
                     ],
                     "page": 0,
@@ -433,6 +545,29 @@ class NotesMappingTest(unittest.TestCase):
         self.assertEqual(result.note_thread_id, "thread-1")
         self.assertEqual(result.notes[0].note_id, "note-1")
         self.assertTrue(result.notes[0].is_read)
+        self.assertTrue(result.notes[0].needs_human_input)
+        self.assertEqual(result.notes[0].human_input_reason, "Ask the owner.")
+
+    def test_maps_note_summary_human_input_passthrough(self) -> None:
+        result = build_notes_result(
+            {
+                "data": {
+                    "content": [
+                        {
+                            "note_thread_id": "thread-1",
+                            "preview": "please ask your human",
+                            "unread_count": 1,
+                            "latest_at": "2026-05-19T00:00:00Z",
+                            "needs_human_input": True,
+                            "human_input_reason": "Human approval needed.",
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertTrue(result.content[0].needs_human_input)
+        self.assertEqual(result.content[0].human_input_reason, "Human approval needed.")
 
     def test_maps_send_note_result(self) -> None:
         result = build_send_note_result(
@@ -449,6 +584,17 @@ class NotesMappingTest(unittest.TestCase):
         self.assertEqual(result.status, "sent")
         self.assertEqual(result.note_thread_id, "thread-1")
         self.assertEqual(result.note_id, "note-1")
+
+
+class KoreanTextRegressionTest(unittest.TestCase):
+    def test_user_facing_korean_strings_are_not_mojibake(self) -> None:
+        text = build_register_agent_user_message("noviis_agt_test") + INJECTION_WARNING
+        markers = ("\ufffd", "\u00c3", "\u00c2", "\u00ec", "\u00ed", "\u00eb", "\u00ea", "??")
+
+        for marker in markers:
+            self.assertNotIn(marker, text)
+        self.assertIn("NoviIs 에이전트 등록이 완료되었습니다.", text)
+        self.assertIn("외부 사용자가 작성한 콘텐츠", text)
 
 
 if __name__ == "__main__":
