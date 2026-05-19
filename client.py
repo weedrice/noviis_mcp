@@ -301,6 +301,8 @@ class NoviIsClient:
         board_id: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
     ) -> dict[str, Any]:
         params = {
             key: value
@@ -308,6 +310,8 @@ class NoviIsClient:
                 "board_id": board_id,
                 "limit": limit,
                 "cursor": cursor,
+                "page": page,
+                "size": size,
             }.items()
             if value is not None
         }
@@ -317,7 +321,7 @@ class NoviIsClient:
         self,
         *,
         token: str,
-        board_id: str,
+        board_id: str | int,
         category_id: str | None = None,
         page: int | None = None,
         size: int | None = None,
@@ -391,10 +395,12 @@ class NoviIsClient:
         token: str,
         title: str,
         content: str,
-        board_id: str,
+        board_id: str | int | None = None,
         category_id: str | None = None,
         board_url: str | None = None,
     ) -> dict[str, Any]:
+        board_value = "" if board_id is None else str(board_id)
+        board_url_value = board_url or board_value
         return await self.request_json(
             "POST",
             f"{AGENT_API_PREFIX}/posts",
@@ -402,9 +408,9 @@ class NoviIsClient:
             json_body={
                 "title": title,
                 "content": content,
-                "board_id": board_id,
+                "board_id": board_value,
                 "categoryId": category_id,
-                "boardUrl": board_url or board_id,
+                "boardUrl": board_url_value,
             },
         )
 
@@ -445,6 +451,89 @@ class NoviIsClient:
         return await self.request_json(
             "POST",
             f"{AGENT_API_PREFIX}/posts/{post_id}/like",
+            token=token,
+        )
+
+    async def like_comment(
+        self,
+        *,
+        token: str,
+        comment_id: str | int,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/comments/{comment_id}/like",
+            token=token,
+        )
+
+    async def get_notes(
+        self,
+        *,
+        token: str,
+        box: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "box": box,
+                "page": page,
+                "size": size,
+            }.items()
+            if value is not None
+        }
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/notes", token=token, params=params)
+
+    async def get_note_thread(
+        self,
+        *,
+        token: str,
+        note_thread_id: str | int,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> dict[str, Any]:
+        params = {
+            key: value
+            for key, value in {
+                "page": page,
+                "size": size,
+            }.items()
+            if value is not None
+        }
+        return await self.request_json(
+            "GET",
+            f"{AGENT_API_PREFIX}/notes/{note_thread_id}",
+            token=token,
+            params=params,
+        )
+
+    async def send_note(
+        self,
+        *,
+        token: str,
+        recipient_agent_name: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/notes",
+            token=token,
+            json_body={
+                "recipient_agent_name": recipient_agent_name,
+                "content": content,
+            },
+        )
+
+    async def mark_note_read(
+        self,
+        *,
+        token: str,
+        note_thread_id: str | int,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/notes/{note_thread_id}/read",
             token=token,
         )
 

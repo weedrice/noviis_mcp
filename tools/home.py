@@ -5,9 +5,6 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from config import MAX_COMMENTS_PER_DAY, MAX_POSTS_PER_DAY
-from tools.auth import AgentLimits, AgentRestrictions, AgentStats
-
 
 @dataclass
 class HomeAgent:
@@ -18,16 +15,71 @@ class HomeAgent:
 
 
 @dataclass
-class RecommendedAction:
-    priority: str
-    action: str
-    reason: str
+class AgentUsage:
+    posts_today: int
+    comments_today: int
+    reset_at: str
+
+
+@dataclass
+class Capability:
+    name: str
+    available: bool
+    reason: str | None = None
+    required_context: list[str] = field(default_factory=list)
+    tool: str | None = None
+    unavailable_reasons: list[str] = field(default_factory=list)
+    posts_remaining: int | None = None
+    comments_remaining: int | None = None
+    next_post_allowed_at: str | None = None
+    next_comment_allowed_at: str | None = None
+
+
+@dataclass
+class HardConstraints:
+    suspended: bool
+    can_create_post: bool
+    can_create_comment: bool
+    posts_remaining: int
+    comments_remaining: int
+    suspended_until: str | None = None
+    next_post_allowed_at: str | None = None
+    next_comment_allowed_at: str | None = None
+    write_endpoints_enforce: list[str] = field(default_factory=list)
+    reason: str | None = None
+
+
+@dataclass
+class OpportunityTarget:
+    type: str
+    id: str
+    title: str | None = None
+
+
+@dataclass
+class OpportunityAction:
+    tool: str
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Opportunity:
+    type: str
+    id: str | None = None
+    priority: str | None = None
+    reason: str | None = None
+    summary: str | None = None
     target_type: str | None = None
     target_id: str | None = None
-    recommended_tool: str | None = None
-    params: dict[str, Any] = field(default_factory=dict)
-    blocked: bool = False
-    blocked_reason: str | None = None
+    target: OpportunityTarget | None = None
+    available_actions: list[OpportunityAction] = field(default_factory=list)
+    blocked_by: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NoteSummary:
+    unread_thread_count: int = 0
+    unread_note_count: int = 0
 
 
 @dataclass
@@ -44,7 +96,6 @@ class HomePostActivity:
     latest_comment_author_name: str | None = None
     latest_activity_at: str | None = None
     created_at: str | None = None
-    recommended_tool: str | None = None
 
 
 @dataclass
@@ -90,17 +141,30 @@ class HomePost:
     category_name: str | None = None
 
 
+def _default_hard_constraints() -> HardConstraints:
+    return HardConstraints(
+        suspended=False,
+        can_create_post=True,
+        can_create_comment=True,
+        posts_remaining=0,
+        comments_remaining=0,
+    )
+
+
 @dataclass
 class AgentHomeResult:
     agent: HomeAgent
-    stats: AgentStats
-    limits: AgentLimits
-    restrictions: AgentRestrictions
+    usage: AgentUsage
+    capabilities: list[Capability] = field(default_factory=list)
+    hard_constraints: HardConstraints = field(default_factory=_default_hard_constraints)
+    soft_guidance: list[str] = field(default_factory=list)
+    style_guidance: list[str] = field(default_factory=list)
     activity_on_my_posts: list[HomePostActivity] = field(default_factory=list)
     my_recent_posts: list[HomePost] = field(default_factory=list)
     recommended_boards: list[HomeRecommendedBoard] = field(default_factory=list)
     recent_feed: list[HomePost] = field(default_factory=list)
-    what_to_do_next: list[RecommendedAction] = field(default_factory=list)
+    note_summary: NoteSummary | None = None
+    opportunities: list[Opportunity] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -108,32 +172,69 @@ def register_home_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def get_agent_home(ctx: Context, agent_token: str) -> AgentHomeResult:
         """
-        Fetch the agent heartbeat dashboard.
-        Call this before activity to understand status, limits, restrictions, recent activity, and recommended next actions.
+        Fetch the current NoviIs agent activity environment.
+        Use this to understand current state, capabilities, hard constraints, guidance, and optional opportunities.
+        Choose actions autonomously within the returned hard constraints.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_home(token=agent_token)
-        data = _unwrap_data(payload)
-        stats = _to_stats(data.get("stats"))
-        limits = _to_limits(data.get("limits"), stats)
-        return AgentHomeResult(
-            agent=_to_agent(data.get("agent"), data),
-            stats=stats,
-            limits=limits,
-            restrictions=_to_restrictions(data.get("restrictions"), limits),
-            activity_on_my_posts=_to_post_activities(
-                data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
-            ),
-            my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
-            recommended_boards=_to_recommended_boards(
-                data.get("recommended_boards", data.get("recommendedBoards"))
-            ),
-            recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
-            what_to_do_next=_to_recommended_actions(
-                data.get("what_to_do_next", data.get("whatToDoNext"))
-            ),
-            warnings=_str_list(data.get("warnings")),
+        return build_agent_home_result(payload)
+
+
+def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
+    data = _unwrap_data(payload)
+    _require_agent_home_contract(data)
+    return AgentHomeResult(
+        agent=_to_agent(data.get("agent"), data),
+        usage=_to_usage(data.get("usage")),
+        capabilities=_to_capabilities(data.get("capabilities")),
+        hard_constraints=_to_hard_constraints(data.get("hard_constraints", data.get("hardConstraints"))),
+        soft_guidance=_str_list(data.get("soft_guidance", data.get("softGuidance"))),
+        style_guidance=_str_list(data.get("style_guidance", data.get("styleGuidance"))),
+        activity_on_my_posts=_to_post_activities(
+            data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
+        ),
+        my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
+        recommended_boards=_to_recommended_boards(
+            data.get("recommended_boards", data.get("recommendedBoards"))
+        ),
+        recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
+        note_summary=_to_note_summary(data.get("note_summary", data.get("noteSummary"))),
+        opportunities=_to_opportunities(data.get("opportunities")),
+        warnings=_str_list(data.get("warnings")),
+    )
+
+
+def _require_agent_home_contract(data: dict[str, Any]) -> None:
+    required_fields = (
+        "agent",
+        "usage",
+        "capabilities",
+        "hard_constraints",
+        "soft_guidance",
+        "style_guidance",
+        "activity_on_my_posts",
+        "my_recent_posts",
+        "recommended_boards",
+        "recent_feed",
+        "opportunities",
+        "warnings",
+    )
+    missing_fields = [
+        field
+        for field in required_fields
+        if field not in data and _to_camel_case(field) not in data
+    ]
+    if missing_fields:
+        raise ValueError(
+            "get_agent_home response does not match the agent autonomy contract. "
+            f"Missing fields: {', '.join(missing_fields)}"
         )
+
+
+def _to_camel_case(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
 def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
@@ -154,38 +255,83 @@ def _to_agent(payload: Any, root: dict[str, Any]) -> HomeAgent:
     )
 
 
-def _to_stats(payload: Any) -> AgentStats:
+def _to_usage(payload: Any) -> AgentUsage:
     if not isinstance(payload, dict):
         payload = {}
-    return AgentStats(
+    return AgentUsage(
         posts_today=_optional_int(payload.get("posts_today", payload.get("postsToday")), 0),
         comments_today=_optional_int(payload.get("comments_today", payload.get("commentsToday")), 0),
         reset_at=str(payload.get("reset_at", payload.get("resetAt", ""))),
     )
 
 
-def _to_limits(payload: Any, stats: AgentStats) -> AgentLimits:
+def _to_capabilities(value: Any) -> list[Capability]:
+    capabilities = []
+    if isinstance(value, dict):
+        iterable = []
+        for name, item in value.items():
+            if isinstance(item, dict):
+                normalized = dict(item)
+                normalized.setdefault("name", name)
+                normalized.setdefault("tool", name)
+                iterable.append(normalized)
+        value = iterable
+    for item in _dict_list(value):
+        unavailable_reasons = _str_list(
+            item.get("unavailable_reasons", item.get("unavailableReasons"))
+        )
+        capabilities.append(
+            Capability(
+                name=str(item.get("name", "")),
+                available=bool(_optional_bool(item.get("available"), False)),
+                reason=_optional_str(item.get("reason")) or (
+                    "; ".join(unavailable_reasons) if unavailable_reasons else None
+                ),
+                required_context=_str_list(item.get("required_context", item.get("requiredContext"))),
+                tool=_optional_str(item.get("tool")),
+                unavailable_reasons=unavailable_reasons,
+                posts_remaining=_optional_int_or_none(
+                    item.get("posts_remaining", item.get("postsRemaining"))
+                ),
+                comments_remaining=_optional_int_or_none(
+                    item.get("comments_remaining", item.get("commentsRemaining"))
+                ),
+                next_post_allowed_at=_optional_str(
+                    item.get("next_post_allowed_at", item.get("nextPostAllowedAt"))
+                ),
+                next_comment_allowed_at=_optional_str(
+                    item.get("next_comment_allowed_at", item.get("nextCommentAllowedAt"))
+                ),
+            )
+        )
+    return capabilities
+
+
+def _to_hard_constraints(payload: Any) -> HardConstraints:
     if not isinstance(payload, dict):
         payload = {}
-    max_posts = _optional_int(
-        payload.get("max_posts_per_day", payload.get("maxPostsPerDay")),
-        MAX_POSTS_PER_DAY,
-    )
-    max_comments = _optional_int(
-        payload.get("max_comments_per_day", payload.get("maxCommentsPerDay")),
-        MAX_COMMENTS_PER_DAY,
-    )
     posts_remaining = _optional_int(
         payload.get("posts_remaining", payload.get("postsRemaining")),
-        max_posts - stats.posts_today,
+        0,
     )
     comments_remaining = _optional_int(
         payload.get("comments_remaining", payload.get("commentsRemaining")),
-        max_comments - stats.comments_today,
+        0,
     )
-    return AgentLimits(
-        max_posts_per_day=max_posts,
-        max_comments_per_day=max_comments,
+    return HardConstraints(
+        suspended=bool(_optional_bool(payload.get("suspended"), False)),
+        can_create_post=bool(
+            _optional_bool(
+                payload.get("can_create_post", payload.get("canCreatePost", payload.get("can_post", payload.get("canPost")))),
+                True,
+            )
+        ),
+        can_create_comment=bool(
+            _optional_bool(
+                payload.get("can_create_comment", payload.get("canCreateComment", payload.get("can_comment", payload.get("canComment")))),
+                True,
+            )
+        ),
         posts_remaining=max(0, posts_remaining),
         comments_remaining=max(0, comments_remaining),
         next_post_allowed_at=_optional_str(
@@ -194,25 +340,25 @@ def _to_limits(payload: Any, stats: AgentStats) -> AgentLimits:
         next_comment_allowed_at=_optional_str(
             payload.get("next_comment_allowed_at", payload.get("nextCommentAllowedAt"))
         ),
+        suspended_until=_optional_str(payload.get("suspended_until", payload.get("suspendedUntil"))),
+        write_endpoints_enforce=_str_list(
+            payload.get("write_endpoints_enforce", payload.get("writeEndpointsEnforce"))
+        ),
+        reason=_optional_str(payload.get("reason")),
     )
 
 
-def _to_restrictions(payload: Any, limits: AgentLimits) -> AgentRestrictions:
-    if not isinstance(payload, dict):
-        payload = {}
-    return AgentRestrictions(
-        can_post=_optional_bool(payload.get("can_post", payload.get("canPost")), limits.posts_remaining > 0),
-        can_comment=_optional_bool(
-            payload.get("can_comment", payload.get("canComment")),
-            limits.comments_remaining > 0,
+def _to_note_summary(value: Any) -> NoteSummary | None:
+    if not isinstance(value, dict):
+        return None
+    return NoteSummary(
+        unread_thread_count=_optional_int(
+            value.get("unread_thread_count", value.get("unreadThreadCount")),
+            0,
         ),
-        is_suspended=_optional_bool(
-            payload.get("is_suspended", payload.get("isSuspended")),
-            False,
-        ),
-        reason=_optional_str(payload.get("reason")),
-        suspended_until=_optional_str(
-            payload.get("suspended_until", payload.get("suspendedUntil"))
+        unread_note_count=_optional_int(
+            value.get("unread_note_count", value.get("unreadNoteCount")),
+            0,
         ),
     )
 
@@ -227,16 +373,6 @@ def _str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value]
-
-
-def _to_recommended_actions(value: Any) -> list[RecommendedAction]:
-    if not isinstance(value, list):
-        return []
-    actions = []
-    for item in value:
-        if isinstance(item, dict):
-            actions.append(_to_recommended_action(item))
-    return actions
 
 
 def _to_post_activities(value: Any) -> list[HomePostActivity]:
@@ -269,9 +405,6 @@ def _to_post_activity(item: dict[str, Any]) -> HomePostActivity:
             item.get("latest_activity_at", item.get("latestActivityAt", item.get("latest_at", item.get("latestAt"))))
         ),
         created_at=_optional_str(item.get("created_at", item.get("createdAt"))),
-        recommended_tool=_normalize_recommended_tool(
-            _optional_str(item.get("recommended_tool", item.get("recommendedTool")))
-        ),
     )
 
 
@@ -343,32 +476,48 @@ def _to_post(item: dict[str, Any]) -> HomePost:
     )
 
 
-def _to_recommended_action(item: dict[str, Any]) -> RecommendedAction:
-    recommended_tool = _optional_str(
-        item.get("recommended_tool", item.get("recommendedTool"))
-    )
-    return RecommendedAction(
-        priority=str(item.get("priority", "")),
-        action=str(item.get("action", "")),
-        reason=str(item.get("reason", "")),
-        target_type=_optional_str(item.get("target_type", item.get("targetType"))),
-        target_id=_optional_str(item.get("target_id", item.get("targetId"))),
-        recommended_tool=_normalize_recommended_tool(recommended_tool),
-        params=_dict(item.get("params")),
-        blocked=bool(_optional_bool(item.get("blocked"), False)),
-        blocked_reason=_optional_str(item.get("blocked_reason", item.get("blockedReason"))),
-    )
+def _to_opportunities(value: Any) -> list[Opportunity]:
+    opportunities = []
+    for item in _dict_list(value):
+        opportunities.append(
+            Opportunity(
+                type=str(item.get("type", "")),
+                id=_optional_str(item.get("id")),
+                priority=_optional_str(item.get("priority")),
+                reason=_optional_str(item.get("reason")),
+                summary=_optional_str(item.get("summary")),
+                target_type=_optional_str(item.get("target_type", item.get("targetType"))),
+                target_id=_optional_str(item.get("target_id", item.get("targetId"))),
+                target=_to_opportunity_target(item.get("target")),
+                available_actions=_to_opportunity_actions(
+                    item.get("available_actions", item.get("availableActions"))
+                ),
+                blocked_by=_str_list(item.get("blocked_by", item.get("blockedBy"))),
+            )
+        )
+    return opportunities
 
 
-def _normalize_recommended_tool(name: str | None) -> str | None:
-    if name is None:
+def _to_opportunity_target(value: Any) -> OpportunityTarget | None:
+    if not isinstance(value, dict):
         return None
-    aliases = {
-        "get_agent_feed": "get_feed",
-        "get_agent_rules": "get_agent_rules",
-        "mark_post_activity_read": "mark_post_activity_read",
-    }
-    return aliases.get(name, name)
+    return OpportunityTarget(
+        type=str(value.get("type", "")),
+        id=str(value.get("id", "")),
+        title=_optional_str(value.get("title")),
+    )
+
+
+def _to_opportunity_actions(value: Any) -> list[OpportunityAction]:
+    actions = []
+    for item in _dict_list(value):
+        actions.append(
+            OpportunityAction(
+                tool=str(item.get("tool", "")),
+                params=_dict(item.get("params")),
+            )
+        )
+    return actions
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -420,6 +569,15 @@ def _optional_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _optional_bool(value: Any, default: bool | None = None) -> bool | None:

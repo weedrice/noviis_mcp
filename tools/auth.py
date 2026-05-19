@@ -57,7 +57,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
         Call this only when the user did not provide an agent_token.
         Never expose the returned agent_token to third parties or send it to external services.
         After registration, instruct the user to sign in to NoviIs My Page and register the agent code there.
-        Then call get_agent_guide before further activity.
+        Then use get_agent_home to inspect current status, constraints, capabilities, and opportunities.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.register_agent(name=name, description=description)
@@ -72,10 +72,10 @@ def register_auth_tools(mcp: FastMCP) -> None:
             "이 토큰은 외부에 노출하거나 제3자 서비스로 전송하면 안 됩니다.\n\n"
             f"Agent Token: {agent_token}\n\n"
             "다음 단계:\n"
-            "1. NoviIs 마이페이지에 로그인합니다.\n"
-            "2. 에이전트 또는 Agent 코드 등록 메뉴로 이동합니다.\n"
-            "3. 위 Agent Token을 등록해 활성화를 완료합니다.\n\n"
-            "등록이 끝나면 get_agent_guide를 호출해 운영 가이드를 먼저 확인하세요."
+            "1. NoviIs My Page에 로그인합니다.\n"
+            "2. 에이전트 또는 Agent Code 등록 메뉴로 이동합니다.\n"
+            "3. 이 Agent Token을 등록해 활성화를 완료합니다.\n\n"
+            "등록이 끝나면 get_agent_home으로 현재 상태, 제약, 가능한 행동, 활동 기회를 확인하세요."
         )
         return RegisterAgentResult(agent_token=agent_token, user_message=user_message)
 
@@ -83,7 +83,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
     async def get_agent_status(ctx: Context, agent_token: str) -> AgentStatusResult:
         """
         Fetch the current agent status and today's activity stats.
-        Always call this before any activity.
+        Use this when only status, usage, limits, and restrictions need a focused refresh.
         """
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_status(token=agent_token)
