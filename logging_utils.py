@@ -5,7 +5,6 @@ import logging
 import logging.config
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from config import LOG_DIR, LOG_JSON, LOG_LEVEL
@@ -17,6 +16,37 @@ SECRET_FIELD_PATTERN = re.compile(
     r"(?P<prefix>\"?(?:authorization|token|agent_token|api_key|secret|ssh_key|password)\"?\s*[:=]\s*\"?)(?P<value>[^\",}\s]+)",
     re.IGNORECASE,
 )
+LOG_RECORD_BASE_FIELDS = frozenset(
+    {
+        "args",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+    }
+)
+ROTATING_FILE_HANDLER = {
+    "class": "logging.handlers.RotatingFileHandler",
+    "maxBytes": 10 * 1024 * 1024,
+    "backupCount": 5,
+    "encoding": "utf-8",
+}
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -29,28 +59,7 @@ class SensitiveDataFilter(logging.Filter):
                 record.args = tuple(_sanitize(value) for value in record.args)
 
         for key, value in list(record.__dict__.items()):
-            if key in {
-                "name",
-                "msg",
-                "args",
-                "levelname",
-                "levelno",
-                "pathname",
-                "filename",
-                "module",
-                "exc_info",
-                "exc_text",
-                "stack_info",
-                "lineno",
-                "funcName",
-                "created",
-                "msecs",
-                "relativeCreated",
-                "thread",
-                "threadName",
-                "processName",
-                "process",
-            }:
+            if key in LOG_RECORD_BASE_FIELDS:
                 continue
             record.__dict__[key] = _sanitize(value)
         return True
@@ -67,31 +76,7 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
 
-        for key, value in record.__dict__.items():
-            if key.startswith("_") or key in {
-                "args",
-                "created",
-                "exc_info",
-                "exc_text",
-                "filename",
-                "funcName",
-                "levelname",
-                "levelno",
-                "lineno",
-                "module",
-                "msecs",
-                "message",
-                "msg",
-                "name",
-                "pathname",
-                "process",
-                "processName",
-                "relativeCreated",
-                "stack_info",
-                "thread",
-                "threadName",
-            }:
-                continue
+        for key, value in _extra_record_items(record):
             payload[key] = value
         return json.dumps(payload, ensure_ascii=False)
 
@@ -99,35 +84,7 @@ class JsonFormatter(logging.Formatter):
 class PlainFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         base = super().format(record)
-        extras = {
-            key: value
-            for key, value in record.__dict__.items()
-            if not key.startswith("_")
-            and key
-            not in {
-                "args",
-                "created",
-                "exc_info",
-                "exc_text",
-                "filename",
-                "funcName",
-                "levelname",
-                "levelno",
-                "lineno",
-                "module",
-                "msecs",
-                "message",
-                "msg",
-                "name",
-                "pathname",
-                "process",
-                "processName",
-                "relativeCreated",
-                "stack_info",
-                "thread",
-                "threadName",
-            }
-        }
+        extras = dict(_extra_record_items(record))
         if extras:
             return f"{base} {json.dumps(extras, ensure_ascii=False)}"
         return base
@@ -138,28 +95,13 @@ def configure_logging() -> None:
     app_log_path = LOG_DIR / "app.log"
     access_log_path = LOG_DIR / "access.log"
 
-    file_handler_factory = {
-        "()": "logging.handlers.RotatingFileHandler",
-        "maxBytes": 10 * 1024 * 1024,
-        "backupCount": 5,
-        "encoding": "utf-8",
-    }
-
     formatter_name = "json" if LOG_JSON else "plain"
     logging.config.dictConfig(
         {
             "version": 1,
             "disable_existing_loggers": False,
-            "filters": {
-                "sanitize": {"()": "logging_utils.SensitiveDataFilter"},
-            },
-            "formatters": {
-                "json": {"()": "logging_utils.JsonFormatter"},
-                "plain": {
-                    "()": "logging_utils.PlainFormatter",
-                    "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
-                },
-            },
+            "filters": _filter_config(),
+            "formatters": _formatter_config(),
             "handlers": {
                 "console_app": {
                     "class": "logging.StreamHandler",
@@ -169,14 +111,14 @@ def configure_logging() -> None:
                     "stream": "ext://sys.stdout",
                 },
                 "app_file": {
-                    **file_handler_factory,
+                    **ROTATING_FILE_HANDLER,
                     "level": LOG_LEVEL,
                     "formatter": formatter_name,
                     "filters": ["sanitize"],
                     "filename": str(app_log_path),
                 },
                 "access_file": {
-                    **file_handler_factory,
+                    **ROTATING_FILE_HANDLER,
                     "level": LOG_LEVEL,
                     "formatter": formatter_name,
                     "filters": ["sanitize"],
@@ -208,16 +150,8 @@ def build_uvicorn_log_config() -> dict[str, Any]:
     return {
         "version": 1,
         "disable_existing_loggers": False,
-        "filters": {
-            "sanitize": {"()": "logging_utils.SensitiveDataFilter"},
-        },
-        "formatters": {
-            "json": {"()": "logging_utils.JsonFormatter"},
-            "plain": {
-                "()": "logging_utils.PlainFormatter",
-                "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
-            },
-        },
+        "filters": _filter_config(),
+        "formatters": _formatter_config(),
         "handlers": {
             "default": {
                 "class": "logging.StreamHandler",
@@ -226,13 +160,10 @@ def build_uvicorn_log_config() -> dict[str, Any]:
                 "stream": "ext://sys.stdout",
             },
             "access": {
-                "class": "logging.handlers.RotatingFileHandler",
+                **ROTATING_FILE_HANDLER,
                 "formatter": formatter_name,
                 "filters": ["sanitize"],
                 "filename": str(LOG_DIR / "access.log"),
-                "encoding": "utf-8",
-                "maxBytes": 10 * 1024 * 1024,
-                "backupCount": 5,
             },
         },
         "loggers": {
@@ -241,6 +172,28 @@ def build_uvicorn_log_config() -> dict[str, Any]:
             "uvicorn.access": {"handlers": ["access"], "level": LOG_LEVEL, "propagate": False},
         },
     }
+
+
+def _filter_config() -> dict[str, Any]:
+    return {"sanitize": {"()": "logging_utils.SensitiveDataFilter"}}
+
+
+def _formatter_config() -> dict[str, Any]:
+    return {
+        "json": {"()": "logging_utils.JsonFormatter"},
+        "plain": {
+            "()": "logging_utils.PlainFormatter",
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    }
+
+
+def _extra_record_items(record: logging.LogRecord) -> list[tuple[str, Any]]:
+    return [
+        (key, value)
+        for key, value in record.__dict__.items()
+        if not key.startswith("_") and key not in LOG_RECORD_BASE_FIELDS
+    ]
 
 
 def _sanitize(value: Any) -> Any:

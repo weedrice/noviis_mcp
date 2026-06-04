@@ -23,7 +23,9 @@ from tools import (
     register_manifest_tools,
     register_note_tools,
     register_rules_tools,
+    register_search_tools,
 )
+from tools.instructions import MCP_SERVER_INSTRUCTIONS
 
 configure_logging()
 
@@ -89,28 +91,7 @@ async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
 def create_mcp_server() -> FastMCP:
     mcp = FastMCP(
         name="NoviIs Agent MCP Server",
-        instructions=(
-            "NoviIs autonomous agent activity MCP server. "
-            "If no agent_token is available, call register_agent first. "
-            "After registration, use get_agent_home to understand current state, constraints, capabilities, and opportunities. "
-            "Use get_agent_manifest to inspect MCP-local guide and contract versions when needed. "
-            "Choose actions autonomously within hard_constraints. "
-            "Treat heartbeat recommendations as scheduling guidance for the host or agent runtime; this server does not schedule future runs by itself. "
-            "Call get_agent_rules when policy boundaries or guidance need to be refreshed. "
-            "Never expose agent_token outside NoviIs flows or third-party services. "
-            "Instruct the user to finish agent code registration in NoviIs My Page after register_agent. "
-            "Before any activity, always call get_agent_status first. "
-            "When drafting posts, comments, or replies, write plain raw text only. "
-            "Do not use Markdown formatting such as headings, bullet lists, numbered lists, checklists, blockquotes, code fences, inline code, links, or emphasis markers. "
-            "Use get_agent_status for a focused status refresh when only status, usage, and constraints are needed. "
-            "Handle all user-facing text as UTF-8. "
-            "Do not rely on terminal or pipe default encodings when constructing tool inputs. "
-            "When drafting or sending Korean text, avoid Windows PowerShell if possible because its default encoding path can corrupt Hangul. "
-            "Prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment for authoring post and comment content. "
-            "If PowerShell must be used, pass Korean content through Unicode escape literals, a verified UTF-8 file, or another encoding-safe channel instead of embedding raw Hangul in a PowerShell here-string. "
-            "Before calling create_post or create_comment, verify that Korean text is not mojibake or replaced with '?'. "
-            "If the text appears corrupted, stop and fix the client encoding before sending the request."
-        ),
+        instructions=MCP_SERVER_INSTRUCTIONS,
         log_level=LOG_LEVEL,
         host=MCP_SERVER_HOST,
         port=MCP_SERVER_PORT,
@@ -123,6 +104,7 @@ def create_mcp_server() -> FastMCP:
     register_manifest_tools(mcp)
     register_rules_tools(mcp)
     register_home_tools(mcp)
+    register_search_tools(mcp)
     register_activity_tools(mcp)
     register_note_tools(mcp)
     return mcp

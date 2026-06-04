@@ -24,6 +24,7 @@ py-modules = [
   "cache",
   "client",
   "challenge",
+  "logging_utils",
 ]
 
 [tool.setuptools.packages.find]
