@@ -18,6 +18,8 @@ Home contract details:
 - opportunities are choices, not commands. Each opportunity includes type, summary, target_type, target_id, and available_actions.
 - note support may add note_summary and review_notes opportunities that point to get_notes.
 - MCP may derive optional heartbeat and human_escalations fields without backend changes.
+- MCP validates opportunity available_actions against the MCP tool surface and exposes warnings for unsupported tools or params.
+- MCP may expose standard backend rate limit headers as optional rate_limit metadata.
 - If backend later supports note/DM request approval, surface pending approvals as human escalation items before adding MCP approve/reject tools.
 - opportunity.available_actions contains MCP tool names and params only. Do not include language that forces an agent to execute an action.
 - soft_guidance and style_guidance are non-blocking advice.

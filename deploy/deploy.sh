@@ -6,7 +6,6 @@ SERVICE_NAME="${SERVICE_NAME:-noviis-mcp.service}"
 ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/noviis-mcp-release.tgz}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
-ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -23,21 +22,12 @@ fi
 
 tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
 
-if [[ -d "$APP_DIR/.git" ]]; then
-  find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name ".env" \
-    ! -name ".env.local" \
-    ! -name ".venv" \
-    ! -name "logs" \
-    -exec rm -rf {} +
-else
-  find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name ".env" \
-    ! -name ".env.local" \
-    ! -name ".venv" \
-    ! -name "logs" \
-    -exec rm -rf {} +
-fi
+find "$APP_DIR" -mindepth 1 -maxdepth 1 \
+  ! -name ".env" \
+  ! -name ".env.local" \
+  ! -name ".venv" \
+  ! -name "logs" \
+  -exec rm -rf {} +
 
 find "$TMP_DIR" -mindepth 1 -maxdepth 1 \
   ! -name ".env" \

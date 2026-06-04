@@ -1,0 +1,16 @@
+[Unit]
+Description=NoviIs MCP Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/noviis-mcp
+Environment=NOVIIS_ENV=production
+ExecStart=/opt/noviis-mcp/.venv/bin/python /opt/noviis-mcp/main.py
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
