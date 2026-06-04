@@ -6,8 +6,20 @@ from typing import Any
 from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
-from exceptions import ChallengeExpired, ChallengeFailed, ChallengeSuspended, ChallengeUsed, NoviIsAPIError
-from tools.activity import _challenge_error_code, _validate_write_text
+from exceptions import NoviIsAPIError
+from tools.challenge_flow import (
+    issue_challenge_result,
+    require_challenge_pair,
+    verify_or_reissue_challenge,
+)
+from tools.parsing import (
+    dict_list as _dict_list,
+    optional_bool as _optional_bool,
+    optional_int as _optional_int,
+    optional_str as _optional_str,
+    unwrap_dict_data as _unwrap_dict_data,
+)
+from tools.write_safety import validate_write_text as _validate_write_text
 
 
 @dataclass
@@ -137,22 +149,22 @@ def register_note_tools(mcp: FastMCP) -> None:
             "recipient_agent_name": recipient_agent_name,
             "content": content,
         }
-        if (challenge_id is None) != (answer is None):
-            raise ValueError("challenge_id and answer must be provided together")
+        require_challenge_pair(challenge_id, answer)
         if challenge_id is None:
-            return SendNoteResult(
-                status="challenge_required",
-                challenge=runtime.challenge_manager.issue_challenge(
-                    owner_key=agent_token,
-                    action="send_note",
-                    payload=request_payload,
-                ),
+            return issue_challenge_result(
+                runtime=runtime,
+                result_factory=SendNoteResult,
+                owner_key=agent_token,
+                action="send_note",
+                payload=request_payload,
             )
 
-        challenge_result = _verify_or_reissue_note_challenge(
+        challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            agent_token=agent_token,
-            request_payload=request_payload,
+            result_factory=SendNoteResult,
+            owner_key=agent_token,
+            action="send_note",
+            payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
         )
@@ -210,7 +222,6 @@ def build_notes_result(payload: dict[str, Any]) -> NotesResult:
         total_pages=_optional_int(data.get("total_pages", data.get("totalPages"))),
         has_next=_optional_bool(data.get("has_next", data.get("hasNext"))),
     )
-
 
 def build_note_thread_result(payload: dict[str, Any]) -> NoteThreadResult:
     data = _unwrap_dict_data(payload)
@@ -277,82 +288,3 @@ def _to_note(item: dict[str, Any]) -> Note:
             item.get("human_input_reason", item.get("humanInputReason"))
         ),
     )
-
-
-def _verify_or_reissue_note_challenge(
-    *,
-    runtime: Any,
-    agent_token: str,
-    request_payload: dict[str, str],
-    challenge_id: str,
-    answer: str,
-) -> SendNoteResult | None:
-    try:
-        runtime.challenge_manager.verify_challenge(
-            owner_key=agent_token,
-            action="send_note",
-            challenge_id=challenge_id,
-            answer=answer,
-            payload=request_payload,
-        )
-    except ChallengeSuspended as exc:
-        return SendNoteResult(
-            status="challenge_suspended",
-            error="challenge_suspended",
-            message="Challenge attempts are temporarily suspended. Wait before retrying.",
-            retry_after_seconds=exc.retry_after,
-        )
-    except (ChallengeExpired, ChallengeUsed, ChallengeFailed) as exc:
-        return SendNoteResult(
-            status="challenge_required",
-            challenge=runtime.challenge_manager.issue_challenge(
-                owner_key=agent_token,
-                action="send_note",
-                payload=request_payload,
-            ),
-            error=_challenge_error_code(exc),
-            message=str(exc),
-        )
-    return None
-
-
-def _unwrap_dict_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
-
-
-def _dict_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _optional_int(value: Any, default: int | None = None) -> int | None:
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_bool(value: Any, default: bool | None = None) -> bool | None:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)

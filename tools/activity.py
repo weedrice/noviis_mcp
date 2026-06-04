@@ -8,10 +8,22 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from cache import get_boards_cache, set_boards_cache
 from config import INJECTION_KEYWORDS, INJECTION_WARNING
-from exceptions import ChallengeExpired, ChallengeFailed, ChallengeSuspended, ChallengeUsed, NoviIsAPIError
-
-
-_MOJIBAKE_MARKERS = ("\u00c3", "\u00c2", "\u00ec", "\u00ed", "\u00eb", "\u00ea")
+from exceptions import NoviIsAPIError
+from tools.challenge_flow import (
+    issue_challenge_result,
+    require_challenge_pair,
+    verify_or_reissue_challenge,
+)
+from tools.parsing import (
+    dict_payload as _dict_payload,
+    extract_name as _extract_name,
+    optional_bool as _optional_bool,
+    optional_int as _optional_int,
+    optional_str as _optional_str,
+    unwrap_dict_data as _unwrap_dict_data,
+    unwrap_list_data as _unwrap_list_data,
+)
+from tools.write_safety import validate_write_text as _validate_write_text
 
 
 @dataclass
@@ -187,7 +199,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if cached is None:
             runtime = ctx.request_context.lifespan_context
             payload = await runtime.client.get_boards(token=agent_token)
-            boards_payload = _unwrap_list_data(payload)
+            boards_payload = _unwrap_list_data(payload, nested_key="boards")
             set_boards_cache(boards_payload)
             cached = boards_payload
 
@@ -389,22 +401,22 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if preflight_result is not None:
             return preflight_result
 
-        if (challenge_id is None) != (answer is None):
-            raise ValueError("challenge_id and answer must be provided together")
+        require_challenge_pair(challenge_id, answer)
         if challenge_id is None:
-            return CreatePostResult(
-                status="challenge_required",
-                challenge=runtime.challenge_manager.issue_challenge(
-                    owner_key=agent_token,
-                    action="create_post",
-                    payload=request_payload,
-                ),
+            return issue_challenge_result(
+                runtime=runtime,
+                result_factory=CreatePostResult,
+                owner_key=agent_token,
+                action="create_post",
+                payload=request_payload,
             )
 
-        challenge_result = _verify_or_reissue_post_challenge(
+        challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            agent_token=agent_token,
-            request_payload=request_payload,
+            result_factory=CreatePostResult,
+            owner_key=agent_token,
+            action="create_post",
+            payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
         )
@@ -450,22 +462,22 @@ def register_activity_tools(mcp: FastMCP) -> None:
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
-        if (challenge_id is None) != (answer is None):
-            raise ValueError("challenge_id and answer must be provided together")
+        require_challenge_pair(challenge_id, answer)
         if challenge_id is None:
-            return CreateCommentResult(
-                status="challenge_required",
-                challenge=runtime.challenge_manager.issue_challenge(
-                    owner_key=agent_token,
-                    action="create_comment",
-                    payload=request_payload,
-                ),
+            return issue_challenge_result(
+                runtime=runtime,
+                result_factory=CreateCommentResult,
+                owner_key=agent_token,
+                action="create_comment",
+                payload=request_payload,
             )
 
-        challenge_result = _verify_or_reissue_comment_challenge(
+        challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            agent_token=agent_token,
-            request_payload=request_payload,
+            result_factory=CreateCommentResult,
+            owner_key=agent_token,
+            action="create_comment",
+            payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
         )
@@ -505,22 +517,22 @@ def register_activity_tools(mcp: FastMCP) -> None:
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
-        if (challenge_id is None) != (answer is None):
-            raise ValueError("challenge_id and answer must be provided together")
+        require_challenge_pair(challenge_id, answer)
         if challenge_id is None:
-            return CreateCommentResult(
-                status="challenge_required",
-                challenge=runtime.challenge_manager.issue_challenge(
-                    owner_key=agent_token,
-                    action="create_reply",
-                    payload=request_payload,
-                ),
+            return issue_challenge_result(
+                runtime=runtime,
+                result_factory=CreateCommentResult,
+                owner_key=agent_token,
+                action="create_reply",
+                payload=request_payload,
             )
 
-        challenge_result = _verify_or_reissue_reply_challenge(
+        challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            agent_token=agent_token,
-            request_payload=request_payload,
+            result_factory=CreateCommentResult,
+            owner_key=agent_token,
+            action="create_reply",
+            payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
         )
@@ -716,33 +728,6 @@ def _filter_comments(raw_comments: Any) -> tuple[list[Comment], int]:
     return filtered_comments, filtered_count
 
 
-def _validate_write_text(field_name: str, value: str) -> None:
-    if _looks_corrupted_korean(value):
-        raise ValueError(
-            f"{field_name} appears to contain corrupted Korean text. "
-            "Use Git Bash, WSL, Unicode escape literals, a verified UTF-8 file, "
-            "or another encoding-safe channel instead of a PowerShell raw Hangul here-string."
-        )
-
-
-def _looks_corrupted_korean(value: str) -> bool:
-    if "\ufffd" in value:
-        return True
-    has_hangul = any(_is_hangul(char) for char in value)
-    if has_hangul:
-        return False
-    return "??" in value or any(marker in value for marker in _MOJIBAKE_MARKERS)
-
-
-def _is_hangul(char: str) -> bool:
-    codepoint = ord(char)
-    return (
-        0xAC00 <= codepoint <= 0xD7A3
-        or 0x1100 <= codepoint <= 0x11FF
-        or 0x3130 <= codepoint <= 0x318F
-    )
-
-
 def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
     content = str(item.get("content", item.get("body", ""))).lower()
     if any(keyword in content for keyword in INJECTION_KEYWORDS):
@@ -763,41 +748,6 @@ def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
             replies.append(sanitized_reply)
 
     return _to_comment(item, replies=replies), filtered_count
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _optional_bool(value: Any) -> bool | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
-
-
-def _extract_name(value: Any) -> str | None:
-    if isinstance(value, dict):
-        return _optional_str(value.get("name", value.get("nickname", value.get("agentName"))))
-    return _optional_str(value)
 
 
 def _extract_like_count(payload: dict[str, Any]) -> int:
@@ -896,12 +846,6 @@ def _create_post_api_error_result(exc: NoviIsAPIError) -> CreatePostResult:
     )
 
 
-def _dict_payload(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        return {}
-    return value
-
-
 async def _resolve_board_url(runtime: Any, board_id: str | int | None) -> str:
     if board_id is None:
         raise ValueError("board_url could not be resolved; fetch boards or pass a known board_url.")
@@ -924,143 +868,3 @@ async def _resolve_board_url(runtime: Any, board_id: str | int | None) -> str:
             if board_url:
                 return str(board_url)
     return board_id_str
-
-
-def _unwrap_dict_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
-
-
-def _unwrap_list_data(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    data = payload.get("data")
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
-    if isinstance(data, dict):
-        boards = data.get("boards")
-        if isinstance(boards, list):
-            return [item for item in boards if isinstance(item, dict)]
-    boards = payload.get("boards")
-    if isinstance(boards, list):
-        return [item for item in boards if isinstance(item, dict)]
-    return []
-
-
-def _verify_or_reissue_post_challenge(
-    *,
-    runtime: Any,
-    agent_token: str,
-    request_payload: dict[str, str],
-    challenge_id: str,
-    answer: str,
-) -> CreatePostResult | None:
-    try:
-        runtime.challenge_manager.verify_challenge(
-            owner_key=agent_token,
-            action="create_post",
-            challenge_id=challenge_id,
-            answer=answer,
-            payload=request_payload,
-        )
-    except ChallengeSuspended as exc:
-        return CreatePostResult(
-            status="challenge_suspended",
-            error="challenge_suspended",
-            message="Challenge attempts are temporarily suspended. Wait before retrying.",
-            retry_after_seconds=exc.retry_after,
-        )
-    except (ChallengeExpired, ChallengeUsed, ChallengeFailed) as exc:
-        return CreatePostResult(
-            status="challenge_required",
-            challenge=runtime.challenge_manager.issue_challenge(
-                owner_key=agent_token,
-                action="create_post",
-                payload=request_payload,
-            ),
-            error=_challenge_error_code(exc),
-            message=str(exc),
-        )
-    return None
-
-
-def _verify_or_reissue_comment_challenge(
-    *,
-    runtime: Any,
-    agent_token: str,
-    request_payload: dict[str, str],
-    challenge_id: str,
-    answer: str,
-) -> CreateCommentResult | None:
-    try:
-        runtime.challenge_manager.verify_challenge(
-            owner_key=agent_token,
-            action="create_comment",
-            challenge_id=challenge_id,
-            answer=answer,
-            payload=request_payload,
-        )
-    except ChallengeSuspended as exc:
-        return CreateCommentResult(
-            status="challenge_suspended",
-            error="challenge_suspended",
-            message="Challenge attempts are temporarily suspended. Wait before retrying.",
-            retry_after_seconds=exc.retry_after,
-        )
-    except (ChallengeExpired, ChallengeUsed, ChallengeFailed) as exc:
-        return CreateCommentResult(
-            status="challenge_required",
-            challenge=runtime.challenge_manager.issue_challenge(
-                owner_key=agent_token,
-                action="create_comment",
-                payload=request_payload,
-            ),
-            error=_challenge_error_code(exc),
-            message=str(exc),
-        )
-    return None
-
-
-def _verify_or_reissue_reply_challenge(
-    *,
-    runtime: Any,
-    agent_token: str,
-    request_payload: dict[str, str],
-    challenge_id: str,
-    answer: str,
-) -> CreateCommentResult | None:
-    try:
-        runtime.challenge_manager.verify_challenge(
-            owner_key=agent_token,
-            action="create_reply",
-            challenge_id=challenge_id,
-            answer=answer,
-            payload=request_payload,
-        )
-    except ChallengeSuspended as exc:
-        return CreateCommentResult(
-            status="challenge_suspended",
-            error="challenge_suspended",
-            message="Challenge attempts are temporarily suspended. Wait before retrying.",
-            retry_after_seconds=exc.retry_after,
-        )
-    except (ChallengeExpired, ChallengeUsed, ChallengeFailed) as exc:
-        return CreateCommentResult(
-            status="challenge_required",
-            challenge=runtime.challenge_manager.issue_challenge(
-                owner_key=agent_token,
-                action="create_reply",
-                payload=request_payload,
-            ),
-            error=_challenge_error_code(exc),
-            message=str(exc),
-        )
-    return None
-
-
-def _challenge_error_code(exc: Exception) -> str:
-    if isinstance(exc, ChallengeExpired):
-        return "challenge_expired"
-    if isinstance(exc, ChallengeUsed):
-        return "challenge_used"
-    return "challenge_failed"

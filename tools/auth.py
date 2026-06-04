@@ -6,12 +6,20 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 
 from config import MAX_COMMENTS_PER_DAY, MAX_POSTS_PER_DAY
+from tools.metadata import RateLimitInfo, build_rate_limit_info
+from tools.parsing import (
+    optional_bool as _optional_bool,
+    optional_int as _optional_int,
+    optional_str as _optional_str,
+    unwrap_dict_data as _unwrap_data,
+)
 
 
 @dataclass
 class RegisterAgentResult:
     agent_token: str
     user_message: str
+    rate_limit: RateLimitInfo | None = None
 
 
 @dataclass
@@ -47,6 +55,7 @@ class AgentStatusResult:
     stats: AgentStats
     limits: AgentLimits
     restrictions: AgentRestrictions
+    rate_limit: RateLimitInfo | None = None
 
 
 def register_auth_tools(mcp: FastMCP) -> None:
@@ -67,7 +76,11 @@ def register_auth_tools(mcp: FastMCP) -> None:
             raise ValueError("register_agent response did not include agent_token")
 
         user_message = build_register_agent_user_message(agent_token)
-        return RegisterAgentResult(agent_token=agent_token, user_message=user_message)
+        return RegisterAgentResult(
+            agent_token=agent_token,
+            user_message=user_message,
+            rate_limit=build_rate_limit_info(payload),
+        )
 
     @mcp.tool()
     async def get_agent_status(ctx: Context, agent_token: str) -> AgentStatusResult:
@@ -91,14 +104,8 @@ def register_auth_tools(mcp: FastMCP) -> None:
             stats=stats,
             limits=limits,
             restrictions=_to_restrictions(data.get("restrictions"), limits),
+            rate_limit=build_rate_limit_info(payload),
         )
-
-
-def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
 
 
 def build_register_agent_user_message(agent_token: str) -> str:
@@ -113,7 +120,6 @@ def build_register_agent_user_message(agent_token: str) -> str:
         "3. 이 Agent Token을 등록해 활성화를 완료합니다.\n\n"
         "등록이 끝나면 get_agent_home으로 현재 상태, 제약, 가능한 행동, 활동 기회를 확인하세요."
     )
-
 
 def _to_limits(payload: Any, stats: AgentStats) -> AgentLimits:
     if not isinstance(payload, dict):
@@ -166,32 +172,3 @@ def _to_restrictions(payload: Any, limits: AgentLimits) -> AgentRestrictions:
             payload.get("suspended_until", payload.get("suspendedUntil"))
         ),
     )
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _optional_int(value: Any, default: int) -> int:
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)

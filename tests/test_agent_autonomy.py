@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+import httpx
+
 from cache import clear_boards_cache, set_boards_cache
+from client import NoviIsClient
 from config import INJECTION_WARNING
 from tools.activity import _build_feed_result, _preflight_create_post, _resolve_board_url
 from tools.auth import build_register_agent_user_message
@@ -11,7 +14,20 @@ from tools.guide import HEARTBEAT_GUIDE
 from tools.home import build_agent_home_result
 from tools.manifest import build_agent_manifest_result
 from tools.notes import build_note_thread_result, build_notes_result, build_send_note_result
+from tools.parsing import (
+    compact_params,
+    dict_list,
+    optional_bool,
+    optional_float,
+    optional_int,
+    optional_int_from_float,
+    optional_str,
+    unwrap_dict_data,
+    unwrap_list_data,
+)
 from tools.rules import build_agent_rules_result
+from tools.search import build_semantic_search_result
+from tools.tool_contract import OPPORTUNITY_ACTION_PARAMS
 
 
 class FakeClient:
@@ -103,6 +119,7 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.heartbeat.urgency, "normal")
         self.assertEqual(result.heartbeat.primary_tool, "get_agent_home")
         self.assertEqual(result.human_escalations, [])
+        self.assertEqual(result.action_quality_warnings, [])
 
     def test_derives_heartbeat_and_human_escalations_without_backend_fields(self) -> None:
         result = build_agent_home_result(
@@ -185,6 +202,41 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.heartbeat.reasons, ["backend_reason"])
         self.assertEqual(result.heartbeat.next_check_after, "2026-05-19T12:30:00+09:00")
         self.assertEqual(result.human_escalations[0].type, "note_request_approval")
+
+    def test_validates_opportunity_action_params(self) -> None:
+        result = build_agent_home_result(
+            {
+                "data": {
+                    "agent": {"status": "active", "name": "agent-name"},
+                    "usage": {},
+                    "capabilities": {},
+                    "hard_constraints": {},
+                    "soft_guidance": [],
+                    "style_guidance": [],
+                    "activity_on_my_posts": [],
+                    "my_recent_posts": [],
+                    "recommended_boards": [],
+                    "recent_feed": [],
+                    "opportunities": [
+                        {
+                            "type": "bad_action",
+                            "available_actions": [
+                                {"tool": "create_post", "params": {"board_url": "normal", "unknown": "x"}},
+                                {"tool": "unknown_tool", "params": {"id": 1}},
+                            ],
+                        }
+                    ],
+                    "warnings": [],
+                }
+            }
+        )
+
+        actions = result.opportunities[0].available_actions
+        self.assertFalse(actions[0].valid)
+        self.assertEqual(actions[0].invalid_params, ["unknown"])
+        self.assertFalse(actions[1].valid)
+        self.assertIn("Unsupported MCP tool", actions[1].validation_warning or "")
+        self.assertEqual(len(result.action_quality_warnings), 2)
 
     def test_old_next_action_contract_is_not_exposed(self) -> None:
         result = build_agent_home_result(
@@ -284,6 +336,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("heartbeat", result.supported_optional_fields)
         self.assertIn("human_escalations", result.supported_optional_fields)
         self.assertIn("get_agent_home", result.primary_tools)
+        self.assertIn("search_content", result.primary_tools)
 
 
 class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
@@ -415,6 +468,7 @@ class OpportunityActionCompatibilityTest(unittest.TestCase):
                             "available_actions": [
                                 {"tool": "get_board_posts", "params": {"board_id": 2, "page": 0, "size": 20}},
                                 {"tool": "create_post", "params": {"board_url": "normal"}},
+                                {"tool": "search_content", "params": {"query": "agent autonomy", "content_type": "ALL", "page": 0, "size": 5}},
                             ],
                         },
                     ],
@@ -423,27 +477,31 @@ class OpportunityActionCompatibilityTest(unittest.TestCase):
             }
         )
 
-        allowed_params = {
-            "get_feed": {"agent_token", "board_id", "limit", "cursor", "page", "size"},
-            "create_comment": {"agent_token", "post_id", "content", "challenge_id", "answer"},
-            "get_board_posts": {"agent_token", "board_id", "category_id", "page", "size"},
-            "create_post": {"agent_token", "title", "content", "board_id", "category_id", "board_url", "challenge_id", "answer"},
-            "like_comment": {"agent_token", "comment_id"},
-            "get_post_comments": {"agent_token", "post_id", "page", "size"},
-            "mark_post_activity_read": {"agent_token", "post_id"},
-            "create_reply": {"agent_token", "comment_id", "content", "challenge_id", "answer"},
-            "like_post": {"agent_token", "post_id"},
-            "delete_post": {"agent_token", "post_id"},
-            "get_notes": {"agent_token", "box", "page", "size"},
-            "get_note_thread": {"agent_token", "note_thread_id", "page", "size"},
-            "send_note": {"agent_token", "recipient_agent_name", "content", "challenge_id", "answer"},
-            "mark_note_read": {"agent_token", "note_thread_id"},
-        }
-
         for opportunity in home.opportunities:
             for action in opportunity.available_actions:
-                self.assertIn(action.tool, allowed_params)
-                self.assertLessEqual(set(action.params), allowed_params[action.tool])
+                self.assertIn(action.tool, OPPORTUNITY_ACTION_PARAMS)
+                self.assertLessEqual(set(action.params), OPPORTUNITY_ACTION_PARAMS[action.tool])
+
+
+class ParsingUtilityTest(unittest.TestCase):
+    def test_unwraps_dict_and_list_data_shapes(self) -> None:
+        self.assertEqual(unwrap_dict_data({"data": {"value": 1}}), {"value": 1})
+        self.assertEqual(unwrap_dict_data({"value": 1}), {"value": 1})
+        self.assertEqual(unwrap_list_data({"data": [{"id": 1}, "bad"]}), [{"id": 1}])
+        self.assertEqual(unwrap_list_data({"data": {"boards": [{"id": 2}]}}, nested_key="boards"), [{"id": 2}])
+
+    def test_optional_scalar_conversions(self) -> None:
+        self.assertEqual(optional_str(3), "3")
+        self.assertEqual(optional_int("42"), 42)
+        self.assertEqual(optional_int("bad", 7), 7)
+        self.assertEqual(optional_int_from_float("42.9"), 42)
+        self.assertEqual(optional_float("0.5"), 0.5)
+        self.assertTrue(optional_bool("yes"))
+        self.assertFalse(optional_bool("off"))
+
+    def test_dict_list_and_compact_params(self) -> None:
+        self.assertEqual(dict_list([{"a": 1}, "bad", {"b": 2}]), [{"a": 1}, {"b": 2}])
+        self.assertEqual(compact_params({"a": 1, "b": None, "c": ""}), {"a": 1, "c": ""})
 
 
 class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
@@ -584,6 +642,147 @@ class NotesMappingTest(unittest.TestCase):
         self.assertEqual(result.status, "sent")
         self.assertEqual(result.note_thread_id, "thread-1")
         self.assertEqual(result.note_id, "note-1")
+
+
+class SemanticSearchMappingTest(unittest.TestCase):
+    def test_maps_vector_search_result(self) -> None:
+        result = build_semantic_search_result(
+            {
+                "data": {
+                    "content": [
+                        {
+                            "contentType": "POST",
+                            "contentId": 123,
+                            "postId": 123,
+                            "boardId": 10,
+                            "boardUrl": "free",
+                            "boardName": "Free",
+                            "title": "Search result",
+                            "excerpt": "Relevant excerpt",
+                            "similarity": 0.8123,
+                            "rankSource": "VECTOR",
+                            "createdAt": "2026-05-20T10:30:00",
+                            "author": {
+                                "userId": 7,
+                                "agentId": None,
+                                "authorType": "USER",
+                                "displayName": "Writer",
+                                "profileImageUrl": "https://example.com/profile.png",
+                            },
+                        }
+                    ],
+                    "page": 0,
+                    "size": 20,
+                    "totalElements": 1,
+                    "totalPages": 1,
+                    "hasNext": False,
+                    "hasPrevious": False,
+                }
+            }
+        )
+
+        self.assertEqual(result.content[0].content_type, "POST")
+        self.assertEqual(result.content[0].post_id, 123)
+        self.assertEqual(result.content[0].similarity, 0.8123)
+        self.assertEqual(result.content[0].rank_source, "VECTOR")
+        self.assertEqual(result.content[0].author.display_name, "Writer")
+        self.assertFalse(result.has_next)
+
+    def test_maps_rate_limit_metadata(self) -> None:
+        result = build_semantic_search_result(
+            {
+                "data": {"content": []},
+                "_rate_limit": {
+                    "limit": "60",
+                    "remaining": "42",
+                    "reset": "1779270000",
+                },
+            }
+        )
+
+        self.assertIsNotNone(result.rate_limit)
+        self.assertEqual(result.rate_limit.limit, 60)
+        self.assertEqual(result.rate_limit.remaining, 42)
+        self.assertEqual(result.rate_limit.reset, 1779270000)
+
+    def test_maps_keyword_fallback_and_comment_id(self) -> None:
+        result = build_semantic_search_result(
+            {
+                "data": {
+                    "content": [
+                        {
+                            "contentType": "COMMENT",
+                            "contentId": 456,
+                            "postId": 123,
+                            "boardId": 10,
+                            "title": "Parent post",
+                            "excerpt": "Fallback excerpt",
+                            "similarity": None,
+                            "rankSource": "KEYWORD_FALLBACK",
+                            "createdAt": "2026-05-20T10:35:00",
+                        }
+                    ],
+                    "page": 0,
+                    "size": 10,
+                    "totalElements": 1,
+                    "totalPages": 1,
+                    "hasNext": False,
+                    "hasPrevious": False,
+                }
+            }
+        )
+
+        self.assertEqual(result.content[0].content_type, "COMMENT")
+        self.assertEqual(result.content[0].content_id, 456)
+        self.assertEqual(result.content[0].comment_id, 456)
+        self.assertIsNone(result.content[0].similarity)
+        self.assertEqual(result.content[0].rank_source, "KEYWORD_FALLBACK")
+
+
+class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
+    async def test_search_semantic_calls_backend_contract(self) -> None:
+        requests = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"content": []}},
+                headers={
+                    "X-RateLimit-Limit": "60",
+                    "X-RateLimit-Remaining": "59",
+                    "X-RateLimit-Reset": "1779270000",
+                },
+            )
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(base_url="https://noviis.test/api/v1", client=async_client)
+        try:
+            payload = await client.search_semantic(
+                query="agent autonomy",
+                token="noviis_agt_test",
+                content_type="post",
+                board_url="free",
+                page=2,
+                size=5,
+            )
+        finally:
+            await async_client.aclose()
+
+        request = requests[0]
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(request.url.path, "/api/v1/search/semantic")
+        self.assertEqual(request.url.params["q"], "agent autonomy")
+        self.assertEqual(request.url.params["contentType"], "POST")
+        self.assertEqual(request.url.params["boardUrl"], "free")
+        self.assertEqual(request.url.params["page"], "2")
+        self.assertEqual(request.url.params["size"], "5")
+        self.assertEqual(request.headers["authorization"], "Bearer noviis_agt_test")
+        self.assertEqual(payload["_rate_limit"]["limit"], "60")
+        self.assertEqual(payload["_rate_limit"]["remaining"], "59")
 
 
 class KoreanTextRegressionTest(unittest.TestCase):

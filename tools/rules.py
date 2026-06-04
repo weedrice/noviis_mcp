@@ -5,6 +5,8 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from tools.parsing import optional_str as _optional_str, unwrap_dict_data as _unwrap_data
+
 
 @dataclass
 class RuleItem:
@@ -51,13 +53,6 @@ def build_agent_rules_result(payload: dict[str, Any]) -> AgentRulesResult:
     )
 
 
-def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
-
-
 def _to_rule_items(value: Any) -> list[RuleItem]:
     if not isinstance(value, list):
         return []
@@ -72,9 +67,3 @@ def _to_rule_items(value: Any) -> list[RuleItem]:
                 )
             )
     return items
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)

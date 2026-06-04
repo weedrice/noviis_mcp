@@ -5,6 +5,23 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from tools.metadata import RateLimitInfo, build_rate_limit_info
+from tools.parsing import (
+    camel_case as _to_camel_case,
+    dict_list as _dict_list,
+    dict_payload as _dict,
+    extract_name as _extract_name,
+    id_str as _id_str,
+    optional_bool as _optional_bool,
+    optional_id as _optional_id,
+    optional_int as _optional_int,
+    optional_int as _optional_int_or_none,
+    optional_str as _optional_str,
+    str_list as _str_list,
+    unwrap_dict_data as _unwrap_data,
+)
+from tools.tool_contract import OPPORTUNITY_ACTION_PARAMS
+
 
 @dataclass
 class HomeAgent:
@@ -60,6 +77,9 @@ class OpportunityTarget:
 class OpportunityAction:
     tool: str
     params: dict[str, Any] = field(default_factory=dict)
+    valid: bool = True
+    invalid_params: list[str] = field(default_factory=list)
+    validation_warning: str | None = None
 
 
 @dataclass
@@ -188,6 +208,8 @@ class AgentHomeResult:
     warnings: list[str] = field(default_factory=list)
     heartbeat: HeartbeatRecommendation = field(default_factory=HeartbeatRecommendation)
     human_escalations: list[HumanEscalation] = field(default_factory=list)
+    action_quality_warnings: list[str] = field(default_factory=list)
+    rate_limit: RateLimitInfo | None = None
 
 
 def register_home_tools(mcp: FastMCP) -> None:
@@ -214,6 +236,7 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
         data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
     )
     note_summary = _to_note_summary(data.get("note_summary", data.get("noteSummary")))
+    opportunities = _to_opportunities(data.get("opportunities"))
     warnings = _str_list(data.get("warnings"))
     return AgentHomeResult(
         agent=agent,
@@ -229,7 +252,7 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
         ),
         recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
         note_summary=note_summary,
-        opportunities=_to_opportunities(data.get("opportunities")),
+        opportunities=opportunities,
         warnings=warnings,
         heartbeat=_to_heartbeat(
             data.get("heartbeat"),
@@ -245,6 +268,8 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
             note_summary=note_summary,
             warnings=warnings,
         ),
+        action_quality_warnings=_action_quality_warnings(opportunities),
+        rate_limit=build_rate_limit_info(payload),
     )
 
 
@@ -273,18 +298,6 @@ def _require_agent_home_contract(data: dict[str, Any]) -> None:
             "get_agent_home response does not match the agent autonomy contract. "
             f"Missing fields: {', '.join(missing_fields)}"
         )
-
-
-def _to_camel_case(value: str) -> str:
-    head, *tail = value.split("_")
-    return head + "".join(part[:1].upper() + part[1:] for part in tail)
-
-
-def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data")
-    if isinstance(data, dict):
-        return data
-    return payload
 
 
 def _to_agent(payload: Any, root: dict[str, Any]) -> HomeAgent:
@@ -526,18 +539,6 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
-def _dict_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _str_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value]
-
-
 def _to_post_activities(value: Any) -> list[HomePostActivity]:
     activities = []
     for item in _dict_list(value):
@@ -674,37 +675,35 @@ def _to_opportunity_target(value: Any) -> OpportunityTarget | None:
 def _to_opportunity_actions(value: Any) -> list[OpportunityAction]:
     actions = []
     for item in _dict_list(value):
+        tool = str(item.get("tool", ""))
+        params = _dict(item.get("params"))
+        allowed_params = OPPORTUNITY_ACTION_PARAMS.get(tool)
+        invalid_params = sorted(set(params) - allowed_params) if allowed_params is not None else sorted(params)
+        validation_warning = None
+        if allowed_params is None:
+            validation_warning = f"Unsupported MCP tool in opportunity action: {tool}"
+        elif invalid_params:
+            validation_warning = f"Unsupported params for {tool}: {', '.join(invalid_params)}"
         actions.append(
             OpportunityAction(
-                tool=str(item.get("tool", "")),
-                params=_dict(item.get("params")),
+                tool=tool,
+                params=params,
+                valid=allowed_params is not None and not invalid_params,
+                invalid_params=invalid_params,
+                validation_warning=validation_warning,
             )
         )
     return actions
 
 
-def _dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    return {}
-
-
-def _id_str(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value)
-
-
-def _optional_id(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _extract_name(value: Any) -> str | None:
-    if isinstance(value, dict):
-        return _optional_str(value.get("name", value.get("nickname", value.get("agentName"))))
-    return _optional_str(value)
+def _action_quality_warnings(opportunities: list[Opportunity]) -> list[str]:
+    warnings = []
+    for opportunity in opportunities:
+        for action in opportunity.available_actions:
+            if action.validation_warning:
+                prefix = f"{opportunity.type}: " if opportunity.type else ""
+                warnings.append(f"{prefix}{action.validation_warning}")
+    return warnings
 
 
 def _extract_category(value: Any) -> tuple[str | None, str | None]:
@@ -717,41 +716,3 @@ def _extract_category(value: Any) -> tuple[str | None, str | None]:
     if value is not None:
         return None, str(value)
     return None, None
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _optional_int(value: Any, default: int) -> int:
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _optional_bool(value: Any, default: bool | None = None) -> bool | None:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)

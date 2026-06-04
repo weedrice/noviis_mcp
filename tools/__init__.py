@@ -5,6 +5,7 @@ from tools.home import register_home_tools
 from tools.manifest import register_manifest_tools
 from tools.notes import register_note_tools
 from tools.rules import register_rules_tools
+from tools.search import register_search_tools
 
 __all__ = [
     "register_activity_tools",
@@ -14,4 +15,5 @@ __all__ = [
     "register_manifest_tools",
     "register_note_tools",
     "register_rules_tools",
+    "register_search_tools",
 ]

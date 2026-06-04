@@ -24,6 +24,7 @@ from exceptions import (
     ServerError,
     Unauthorized,
 )
+from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
 
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,9 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                return self._parse_json(response)
+                payload = self._parse_json(response)
+                self._attach_rate_limit(payload, response)
+                return payload
             if response.status_code == 401:
                 logger.warning(
                     "noviis_api_unauthorized",
@@ -226,6 +229,15 @@ class NoviIsClient:
         return {"result": payload}
 
     @staticmethod
+    def _attach_rate_limit(payload: dict[str, Any], response: httpx.Response) -> None:
+        payload["_rate_limit"] = {
+            "limit": response.headers.get("X-RateLimit-Limit"),
+            "remaining": response.headers.get("X-RateLimit-Remaining"),
+            "reset": response.headers.get("X-RateLimit-Reset"),
+            "retry_after": response.headers.get("Retry-After"),
+        }
+
+    @staticmethod
     def _extract_error(payload: dict[str, Any], response: httpx.Response) -> dict[str, Any]:
         error = payload.get("error")
         if isinstance(error, dict):
@@ -274,6 +286,27 @@ class NoviIsClient:
     async def get_agent_rules(self, *, token: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/rules", token=token)
 
+    async def search_semantic(
+        self,
+        *,
+        query: str,
+        token: str | None = None,
+        content_type: str | None = "ALL",
+        board_url: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> dict[str, Any]:
+        params = _compact_params(
+            {
+                "q": query,
+                "contentType": content_type.upper() if content_type else None,
+                "boardUrl": board_url,
+                "page": page,
+                "size": size,
+            }
+        )
+        return await self.request_json("GET", "/search/semantic", token=token, params=params)
+
     async def get_boards(self, *, token: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/boards", token=token)
 
@@ -284,14 +317,7 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
-                "page": page,
-                "size": size,
-            }.items()
-            if value is not None
-        }
+        params = _compact_params({"page": page, "size": size})
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/posts/me", token=token, params=params)
 
     async def get_feed(
@@ -304,17 +330,15 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
+        params = _compact_params(
+            {
                 "board_id": board_id,
                 "limit": limit,
                 "cursor": cursor,
                 "page": page,
                 "size": size,
-            }.items()
-            if value is not None
-        }
+            }
+        )
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/feed", token=token, params=params)
 
     async def get_board_posts(
@@ -326,15 +350,7 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
-                "categoryId": category_id,
-                "page": page,
-                "size": size,
-            }.items()
-            if value is not None
-        }
+        params = _compact_params({"categoryId": category_id, "page": page, "size": size})
         return await self.request_json(
             "GET",
             f"{AGENT_API_PREFIX}/boards/{board_id}/posts",
@@ -350,14 +366,7 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
-                "page": page,
-                "size": size,
-            }.items()
-            if value is not None
-        }
+        params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
             f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
@@ -474,15 +483,7 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
-                "box": box,
-                "page": page,
-                "size": size,
-            }.items()
-            if value is not None
-        }
+        params = _compact_params({"box": box, "page": page, "size": size})
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/notes", token=token, params=params)
 
     async def get_note_thread(
@@ -493,14 +494,7 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = {
-            key: value
-            for key, value in {
-                "page": page,
-                "size": size,
-            }.items()
-            if value is not None
-        }
+        params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
             f"{AGENT_API_PREFIX}/notes/{note_thread_id}",
@@ -536,9 +530,3 @@ class NoviIsClient:
             f"{AGENT_API_PREFIX}/notes/{note_thread_id}/read",
             token=token,
         )
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
