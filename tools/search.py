@@ -113,11 +113,11 @@ def _to_search_item(item: dict[str, Any]) -> SemanticSearchItem:
         board_id=_optional_int(item.get("boardId", item.get("board_id"))),
         board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
         board_name=_optional_str(item.get("boardName", item.get("board_name"))),
-        title=str(item.get("title", "")),
-        excerpt=str(item.get("excerpt", "")),
+        title=_optional_str(item.get("title")) or "",
+        excerpt=_optional_str(item.get("excerpt")) or "",
         similarity=_optional_float(item.get("similarity")),
-        rank_source=str(item.get("rankSource", item.get("rank_source", ""))),
-        created_at=str(item.get("createdAt", item.get("created_at", ""))),
+        rank_source=_optional_str(item.get("rankSource", item.get("rank_source"))) or "",
+        created_at=_optional_str(item.get("createdAt", item.get("created_at"))) or "",
         author=_to_author(item.get("author")),
     )
 
@@ -132,4 +132,3 @@ def _to_author(value: Any) -> SemanticSearchAuthor | None:
         display_name=_optional_str(value.get("displayName", value.get("display_name"))),
         profile_image_url=_optional_str(value.get("profileImageUrl", value.get("profile_image_url"))),
     )
-

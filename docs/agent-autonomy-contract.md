@@ -65,6 +65,7 @@ blocked users, secret posts, and scoped board access.
 Inputs:
 
 - `query`: required search text, sent to backend as `q`
+- `agent_token`: optional bearer token for permission-aware visibility filtering
 - `content_type`: optional `ALL`, `POST`, or `COMMENT`
 - `board_url`: optional board scope
 - `page` and `size`: page-based pagination

@@ -435,6 +435,12 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
 
 
 class OpportunityActionCompatibilityTest(unittest.TestCase):
+    def test_search_content_opportunity_params_match_public_tool_contract(self) -> None:
+        self.assertEqual(
+            OPPORTUNITY_ACTION_PARAMS["search_content"],
+            {"query", "agent_token", "content_type", "board_url", "page", "size"},
+        )
+
     def test_backend_opportunity_params_match_mcp_tool_signatures(self) -> None:
         home = build_agent_home_result(
             {
@@ -737,6 +743,36 @@ class SemanticSearchMappingTest(unittest.TestCase):
         self.assertEqual(result.content[0].comment_id, 456)
         self.assertIsNone(result.content[0].similarity)
         self.assertEqual(result.content[0].rank_source, "KEYWORD_FALLBACK")
+        self.assertEqual(result.page, 0)
+        self.assertEqual(result.size, 10)
+        self.assertEqual(result.total_elements, 1)
+        self.assertEqual(result.total_pages, 1)
+        self.assertFalse(result.has_next)
+        self.assertFalse(result.has_previous)
+
+    def test_maps_nullable_text_fields_to_empty_strings(self) -> None:
+        result = build_semantic_search_result(
+            {
+                "data": {
+                    "content": [
+                        {
+                            "contentType": "POST",
+                            "contentId": 123,
+                            "title": None,
+                            "excerpt": None,
+                            "rankSource": None,
+                            "createdAt": None,
+                        }
+                    ]
+                }
+            }
+        )
+
+        item = result.content[0]
+        self.assertEqual(item.title, "")
+        self.assertEqual(item.excerpt, "")
+        self.assertEqual(item.rank_source, "")
+        self.assertEqual(item.created_at, "")
 
 
 class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
@@ -783,6 +819,30 @@ class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.headers["authorization"], "Bearer noviis_agt_test")
         self.assertEqual(payload["_rate_limit"]["limit"], "60")
         self.assertEqual(payload["_rate_limit"]["remaining"], "59")
+
+    async def test_search_semantic_supports_public_search_without_authorization(self) -> None:
+        requests = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"success": True, "data": {"content": []}})
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(base_url="https://noviis.test/api/v1", client=async_client)
+        try:
+            await client.search_semantic(query="public topic")
+        finally:
+            await async_client.aclose()
+
+        request = requests[0]
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(request.url.path, "/api/v1/search/semantic")
+        self.assertEqual(request.url.params["q"], "public topic")
+        self.assertEqual(request.url.params["contentType"], "ALL")
+        self.assertNotIn("authorization", request.headers)
 
 
 class KoreanTextRegressionTest(unittest.TestCase):
