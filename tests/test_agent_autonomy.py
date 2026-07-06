@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import unittest
 from types import SimpleNamespace
 
@@ -8,6 +11,8 @@ import httpx
 from cache import clear_boards_cache, set_boards_cache
 from client import NoviIsClient
 from config import INJECTION_WARNING
+from exceptions import PermissionDenied, Unauthorized
+from logging_utils import _sanitize
 from tools.activity import _build_feed_result, _preflight_create_post, _resolve_board_url
 from tools.auth import build_register_agent_user_message
 from tools.guide import HEARTBEAT_GUIDE
@@ -775,6 +780,83 @@ class SemanticSearchMappingTest(unittest.TestCase):
         self.assertEqual(item.created_at, "")
 
 
+class ConfigValidationTest(unittest.TestCase):
+    def test_development_config_imports_without_explicit_internal_secret(self) -> None:
+        env = os.environ.copy()
+        env.pop("NOVIIS_ENV", None)
+        env.pop("NOVIIS_AGENT_INTERNAL_SECRET", None)
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import dotenv; dotenv.load_dotenv = lambda *args, **kwargs: False; "
+                "import config; print(config.NOVIIS_AGENT_INTERNAL_SECRET)",
+            ],
+            cwd=os.getcwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("development-internal-secret", completed.stdout)
+
+    def test_production_config_requires_internal_secret(self) -> None:
+        env = os.environ.copy()
+        env.update(
+            {
+                "NOVIIS_ENV": "production",
+                "NOVIIS_API_BASE_URL": "https://noviis.test/api/v1",
+            }
+        )
+        env.pop("NOVIIS_AGENT_INTERNAL_SECRET", None)
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import dotenv; dotenv.load_dotenv = lambda *args, **kwargs: False; import config",
+            ],
+            cwd=os.getcwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("NOVIIS_AGENT_INTERNAL_SECRET", completed.stderr)
+
+    def test_production_config_requires_api_base_url(self) -> None:
+        env = os.environ.copy()
+        env.update(
+            {
+                "NOVIIS_ENV": "production",
+                "NOVIIS_AGENT_INTERNAL_SECRET": "test-internal-secret",
+            }
+        )
+        env.pop("NOVIIS_API_BASE_URL", None)
+        env.pop("NOVIIS_BASE_URL", None)
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import dotenv; dotenv.load_dotenv = lambda *args, **kwargs: False; import config",
+            ],
+            cwd=os.getcwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("NOVIIS_API_BASE_URL", completed.stderr)
+
+
 class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
     async def test_search_semantic_calls_backend_contract(self) -> None:
         requests = []
@@ -795,7 +877,11 @@ class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
             base_url="https://noviis.test/api/v1",
             transport=httpx.MockTransport(handler),
         )
-        client = NoviIsClient(base_url="https://noviis.test/api/v1", client=async_client)
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
         try:
             payload = await client.search_semantic(
                 query="agent autonomy",
@@ -816,6 +902,8 @@ class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.url.params["boardUrl"], "free")
         self.assertEqual(request.url.params["page"], "2")
         self.assertEqual(request.url.params["size"], "5")
+        self.assertEqual(request.headers["x-noviis-agent"], "true")
+        self.assertEqual(request.headers["x-noviis-internal-secret"], "test-internal-secret")
         self.assertEqual(request.headers["authorization"], "Bearer noviis_agt_test")
         self.assertEqual(payload["_rate_limit"]["limit"], "60")
         self.assertEqual(payload["_rate_limit"]["remaining"], "59")
@@ -831,7 +919,11 @@ class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
             base_url="https://noviis.test/api/v1",
             transport=httpx.MockTransport(handler),
         )
-        client = NoviIsClient(base_url="https://noviis.test/api/v1", client=async_client)
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
         try:
             await client.search_semantic(query="public topic")
         finally:
@@ -842,7 +934,84 @@ class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.url.path, "/api/v1/search/semantic")
         self.assertEqual(request.url.params["q"], "public topic")
         self.assertEqual(request.url.params["contentType"], "ALL")
+        self.assertEqual(request.headers["x-noviis-agent"], "true")
+        self.assertEqual(request.headers["x-noviis-internal-secret"], "test-internal-secret")
         self.assertNotIn("authorization", request.headers)
+
+    async def test_internal_secret_forbidden_response_has_operational_message(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, json={"message": "Internal agent request required"})
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
+        try:
+            with self.assertRaisesRegex(PermissionDenied, "X-NoviIs-Internal-Secret"):
+                await client.get_agent_status(token="noviis_agt_test")
+        finally:
+            await async_client.aclose()
+
+    async def test_agent_header_forbidden_response_has_operational_message(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, json={"message": "Agent header required"})
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
+        try:
+            with self.assertRaisesRegex(PermissionDenied, "X-NoviIs-Agent"):
+                await client.get_agent_status(token="noviis_agt_test")
+        finally:
+            await async_client.aclose()
+
+    async def test_unauthorized_response_keeps_agent_token_error_boundary(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"message": "Invalid agent token"})
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
+        try:
+            with self.assertRaisesRegex(Unauthorized, "Invalid agent token"):
+                await client.get_agent_status(token="noviis_agt_test")
+        finally:
+            await async_client.aclose()
+
+
+class LoggingSanitizerTest(unittest.TestCase):
+    def test_sanitizes_internal_secret_header_strings_and_dicts(self) -> None:
+        secret = "super-secret-value"
+        text = _sanitize(f"X-NoviIs-Internal-Secret: {secret}")
+        payload = _sanitize({"X-NoviIs-Internal-Secret": secret})
+
+        self.assertNotIn(secret, text)
+        self.assertIn("X-NoviIs-Internal-Secret: ****", text)
+        self.assertEqual(payload["X-NoviIs-Internal-Secret"], "****")
+
+    def test_sanitizes_authorization_bearer_values(self) -> None:
+        token = "noviis_agt_test"
+        text = _sanitize(f"Authorization: Bearer {token}")
+
+        self.assertNotIn(token, text)
+        self.assertIn("****", text)
 
 
 class KoreanTextRegressionTest(unittest.TestCase):

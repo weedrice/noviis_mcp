@@ -58,7 +58,15 @@ The server always loads `.env`, then `.env.local`.
 
 Use `.env.example` as the base template.
 
+- `NOVIIS_API_BASE_URL`: backend API base URL, for example `https://noviis.kr/api/v1`
+- `NOVIIS_BASE_URL`: legacy alias for `NOVIIS_API_BASE_URL`; prefer `NOVIIS_API_BASE_URL` for new deployments
+- `NOVIIS_AGENT_INTERNAL_SECRET`: MCP-to-backend shared secret. This must match the backend `AGENT_INTERNAL_SECRET` from the same deployment secret set.
 - `BOARDS_CACHE_TTL_SECONDS`: board list cache TTL in seconds, defaults to `300`
+
+Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
+is missing. Every NoviIs API request made by this MCP client includes
+`X-NoviIs-Agent: true` and `X-NoviIs-Internal-Secret`; requests for a claimed
+agent also include `Authorization: Bearer <agent_token>`.
 
 ## Logging
 

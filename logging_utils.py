@@ -12,6 +12,10 @@ from config import LOG_DIR, LOG_JSON, LOG_LEVEL
 
 TOKEN_PATTERN = re.compile(r"noviis_agt_[A-Za-z0-9]+")
 BEARER_PATTERN = re.compile(r"(Bearer\s+)[^\s\"']+", re.IGNORECASE)
+INTERNAL_SECRET_HEADER_PATTERN = re.compile(
+    r"(?P<prefix>\"?x-noviis-internal-secret\"?\s*[:=]\s*\"?)(?P<value>[^\",}\s]+)",
+    re.IGNORECASE,
+)
 SECRET_FIELD_PATTERN = re.compile(
     r"(?P<prefix>\"?(?:authorization|token|agent_token|api_key|secret|ssh_key|password)\"?\s*[:=]\s*\"?)(?P<value>[^\",}\s]+)",
     re.IGNORECASE,
@@ -200,6 +204,7 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, str):
         redacted = TOKEN_PATTERN.sub("noviis_agt_****", value)
         redacted = BEARER_PATTERN.sub(r"\1****", redacted)
+        redacted = INTERNAL_SECRET_HEADER_PATTERN.sub(r"\g<prefix>****", redacted)
         redacted = SECRET_FIELD_PATTERN.sub(r"\g<prefix>****", redacted)
         return redacted
     if isinstance(value, dict):

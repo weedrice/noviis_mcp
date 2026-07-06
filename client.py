@@ -12,7 +12,8 @@ from config import (
     BACKOFF_BASE,
     BACKOFF_MAX,
     MAX_RETRY,
-    NOVIIS_BASE_URL,
+    NOVIIS_AGENT_INTERNAL_SECRET,
+    NOVIIS_API_BASE_URL,
     REQUEST_TIMEOUT,
     SERVER_ERROR_WAIT,
 )
@@ -41,16 +42,20 @@ def mask_token(token: str | None) -> str:
 class NoviIsClient:
     def __init__(
         self,
-        base_url: str = NOVIIS_BASE_URL,
+        base_url: str = NOVIIS_API_BASE_URL,
+        internal_secret: str = NOVIIS_AGENT_INTERNAL_SECRET,
         timeout: float = REQUEST_TIMEOUT,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        internal_secret = internal_secret.strip()
+        if not internal_secret:
+            raise ValueError("Missing required environment variable: NOVIIS_AGENT_INTERNAL_SECRET")
         self._base_url = base_url.rstrip("/")
+        self._internal_secret = internal_secret
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             base_url=self._base_url,
             timeout=timeout,
-            headers={"X-NoviIs-Agent": "true"},
         )
 
     async def aclose(self) -> None:
@@ -66,9 +71,7 @@ class NoviIsClient:
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        headers = {}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = self._build_headers(token)
 
         retries_for_429 = 0
         retried_500 = False
@@ -134,6 +137,14 @@ class NoviIsClient:
                 )
                 if payload.get("status") == "suspended":
                     raise AgentSuspended(payload.get("message", "Agent is suspended"))
+                if self._is_agent_header_required(error):
+                    raise PermissionDenied(
+                        "NoviIs backend rejected the request because X-NoviIs-Agent was missing or invalid"
+                    )
+                if self._is_internal_agent_request_required(error):
+                    raise PermissionDenied(
+                        "NoviIs backend rejected the request because X-NoviIs-Internal-Secret was missing or invalid"
+                    )
                 if error["code"]:
                     raise NoviIsAPIError(
                         status_code=response.status_code,
@@ -218,6 +229,15 @@ class NoviIsClient:
             )
             response.raise_for_status()
 
+    def _build_headers(self, token: str | None) -> dict[str, str]:
+        headers = {
+            "X-NoviIs-Agent": "true",
+            "X-NoviIs-Internal-Secret": self._internal_secret,
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
     @staticmethod
     def _parse_json(response: httpx.Response) -> dict[str, Any]:
         try:
@@ -259,6 +279,24 @@ class NoviIsClient:
     def _extract_message(response: httpx.Response) -> str:
         payload = NoviIsClient._parse_json(response)
         return NoviIsClient._extract_error(payload, response)["message"]
+
+    @staticmethod
+    def _is_agent_header_required(error: dict[str, Any]) -> bool:
+        return NoviIsClient._matches_forbidden_error(error, "agent header required", "agent_header_required")
+
+    @staticmethod
+    def _is_internal_agent_request_required(error: dict[str, Any]) -> bool:
+        return NoviIsClient._matches_forbidden_error(
+            error,
+            "internal agent request required",
+            "internal_agent_request_required",
+        )
+
+    @staticmethod
+    def _matches_forbidden_error(error: dict[str, Any], message: str, code: str) -> bool:
+        error_message = str(error.get("message") or "").strip().lower()
+        error_code = str(error.get("code") or "").strip().lower()
+        return message in error_message or error_code == code
 
     @staticmethod
     def _parse_retry_after(response: httpx.Response) -> int | None:

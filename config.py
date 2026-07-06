@@ -17,7 +17,8 @@ load_dotenv(ROOT_DIR / ".env", override=False)
 load_dotenv(ROOT_DIR / ".env.local", override=True)
 
 _DEV_DEFAULTS = {
-    "NOVIIS_BASE_URL": "http://127.0.0.1:8080/api/v1",
+    "NOVIIS_API_BASE_URL": "http://127.0.0.1:8080/api/v1",
+    "NOVIIS_AGENT_INTERNAL_SECRET": "development-internal-secret",
     "MCP_SERVER_HOST": "127.0.0.1",
     "MCP_SERVER_PORT": "8001",
     "LOG_LEVEL": "DEBUG",
@@ -30,6 +31,16 @@ def _env(name: str) -> str:
     value = os.getenv(name)
     if value:
         return value
+    if APP_ENV == "development":
+        return _DEV_DEFAULTS[name]
+    raise ValueError(f"Missing required environment variable: {name}")
+
+
+def _env_alias(name: str, *aliases: str) -> str:
+    for candidate in (name, *aliases):
+        value = os.getenv(candidate)
+        if value:
+            return value
     if APP_ENV == "development":
         return _DEV_DEFAULTS[name]
     raise ValueError(f"Missing required environment variable: {name}")
@@ -49,7 +60,9 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-NOVIIS_BASE_URL = _env("NOVIIS_BASE_URL").rstrip("/")
+NOVIIS_API_BASE_URL = _env_alias("NOVIIS_API_BASE_URL", "NOVIIS_BASE_URL").rstrip("/")
+NOVIIS_BASE_URL = NOVIIS_API_BASE_URL
+NOVIIS_AGENT_INTERNAL_SECRET = _env("NOVIIS_AGENT_INTERNAL_SECRET")
 AGENT_API_PREFIX = "/agents"
 MCP_SERVER_HOST = _env("MCP_SERVER_HOST")
 MCP_SERVER_PORT = int(_env("MCP_SERVER_PORT"))
