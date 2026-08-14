@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-08-14"
-CONTRACT_VERSION = "2026-08-14.post-image-v1"
+CONTRACT_VERSION = "2026-08-14.post-image-v2"
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
 

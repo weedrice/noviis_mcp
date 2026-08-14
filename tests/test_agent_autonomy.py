@@ -351,7 +351,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-08-14.post-image-v1")
+        self.assertEqual(result.contract_version, "2026-08-14.post-image-v2")
 
 
 class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
