@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import base64
+import json
 import subprocess
 import sys
 import unittest
@@ -13,7 +15,13 @@ from client import NoviIsClient
 from config import INJECTION_WARNING
 from exceptions import PermissionDenied, Unauthorized
 from logging_utils import _sanitize
-from tools.activity import _build_feed_result, _preflight_create_post, _resolve_board_url
+from tools.activity import (
+    _build_feed_result,
+    _decode_post_image,
+    _normalize_image_file_id,
+    _preflight_create_post,
+    _resolve_board_url,
+)
 from tools.auth import build_register_agent_user_message
 from tools.guide import HEARTBEAT_GUIDE
 from tools.home import build_agent_home_result
@@ -342,6 +350,8 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("human_escalations", result.supported_optional_fields)
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
+        self.assertIn("upload_post_image", result.primary_tools)
+        self.assertEqual(result.contract_version, "2026-08-14.post-image-v1")
 
 
 class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
@@ -513,6 +523,17 @@ class ParsingUtilityTest(unittest.TestCase):
     def test_dict_list_and_compact_params(self) -> None:
         self.assertEqual(dict_list([{"a": 1}, "bad", {"b": 2}]), [{"a": 1}, {"b": 2}])
         self.assertEqual(compact_params({"a": 1, "b": None, "c": ""}), {"a": 1, "c": ""})
+
+    def test_post_image_input_validation(self) -> None:
+        raw = b"image-bytes"
+        self.assertEqual(_decode_post_image(base64.b64encode(raw).decode("ascii")), raw)
+        data_uri = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+        self.assertEqual(_decode_post_image(data_uri), raw)
+        self.assertEqual(_normalize_image_file_id("91"), "91")
+        with self.assertRaisesRegex(ValueError, "valid Base64"):
+            _decode_post_image("not-base64!")
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            _normalize_image_file_id("0")
 
 
 class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
@@ -858,6 +879,80 @@ class ConfigValidationTest(unittest.TestCase):
 
 
 class SemanticSearchClientTest(unittest.IsolatedAsyncioTestCase):
+    async def test_upload_post_image_calls_agent_multipart_contract(self) -> None:
+        requests = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                201,
+                json={
+                    "success": True,
+                    "data": {"imageFileId": 91, "imageUrl": "/api/v1/files/91"},
+                },
+            )
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
+        try:
+            await client.upload_post_image(
+                token="noviis_agt_test",
+                filename="post.png",
+                mime_type="image/png",
+                image_bytes=b"image-bytes",
+            )
+        finally:
+            await async_client.aclose()
+
+        request = requests[0]
+        body = request.content
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.url.path, "/api/v1/agents/post-images")
+        self.assertTrue(request.headers["content-type"].startswith("multipart/form-data; boundary="))
+        self.assertEqual(request.headers["authorization"], "Bearer noviis_agt_test")
+        self.assertIn(b'filename="post.png"', body)
+        self.assertIn(b"Content-Type: image/png", body)
+        self.assertIn(b"image-bytes", body)
+
+    async def test_create_post_forwards_uploaded_image_reference(self) -> None:
+        requests = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(201, json={"success": True, "data": {"postId": 101}})
+
+        async_client = httpx.AsyncClient(
+            base_url="https://noviis.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        client = NoviIsClient(
+            base_url="https://noviis.test/api/v1",
+            internal_secret="test-internal-secret",
+            client=async_client,
+        )
+        try:
+            await client.create_post(
+                token="noviis_agt_test",
+                title="title",
+                content="content",
+                board_url="free",
+                image_file_id="91",
+                image_alt="caption",
+            )
+        finally:
+            await async_client.aclose()
+
+        request_payload = json.loads(requests[0].content)
+        self.assertEqual(request_payload["imageFileId"], "91")
+        self.assertEqual(request_payload["imageAlt"], "caption")
+
     async def test_search_semantic_calls_backend_contract(self) -> None:
         requests = []
 

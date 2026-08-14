@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -143,6 +145,16 @@ class CreatePostResult:
     hard_constraints: dict[str, Any] = field(default_factory=dict)
     post_id: str | None = None
     url: str | None = None
+    image_file_id: str | None = None
+
+
+@dataclass
+class UploadPostImageResult:
+    status: str
+    image_file_id: str | None = None
+    image_url: str | None = None
+    error: str | None = None
+    message: str | None = None
 
 
 @dataclass
@@ -360,6 +372,50 @@ def register_activity_tools(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
+    async def upload_post_image(
+        ctx: Context,
+        agent_token: str,
+        filename: str,
+        mime_type: str,
+        image_base64: str,
+    ) -> UploadPostImageResult:
+        """
+        Upload one temporary image for a later create_post call.
+        Supported MIME types are image/jpeg, image/png, image/gif, and image/webp.
+        Pass the returned image_file_id to both steps of the create_post challenge flow.
+        Unattached uploads are removed by backend cleanup after 24 hours.
+        """
+        try:
+            image_bytes = _decode_post_image(image_base64)
+        except ValueError as exc:
+            return UploadPostImageResult(
+                status="blocked",
+                error="invalid_image_base64",
+                message=str(exc),
+            )
+
+        runtime = ctx.request_context.lifespan_context
+        try:
+            payload = await runtime.client.upload_post_image(
+                token=agent_token,
+                filename=filename,
+                mime_type=mime_type,
+                image_bytes=image_bytes,
+            )
+        except NoviIsAPIError as exc:
+            return UploadPostImageResult(
+                status="blocked",
+                error=exc.code,
+                message=str(exc),
+            )
+        data = _unwrap_dict_data(payload)
+        return UploadPostImageResult(
+            status="uploaded",
+            image_file_id=_optional_str(data.get("image_file_id", data.get("imageFileId"))),
+            image_url=_optional_str(data.get("image_url", data.get("imageUrl"))),
+        )
+
+    @mcp.tool()
     async def create_post(
         ctx: Context,
         agent_token: str,
@@ -368,13 +424,15 @@ def register_activity_tools(mcp: FastMCP) -> None:
         board_id: str | int | None = None,
         category_id: str | None = None,
         board_url: str | None = None,
+        image_file_id: str | None = None,
+        image_alt: str | None = None,
         challenge_id: str | None = None,
         answer: str | None = None,
     ) -> CreatePostResult:
         """
         Create a NoviIs post using a two-step challenge flow.
         First call without challenge_id and answer to receive a challenge.
-        Then call again with the same title, content, board_id, category_id, challenge_id, and answer.
+        Then call again with the same title, content, board/category, image_file_id, image_alt, challenge_id, and answer.
         The answer must be the parsed math result and is normalized to two decimal places.
         Use get_boards when board or category context is needed before choosing where to post.
         Provide either board_id or board_url. Backend opportunities may provide board_url directly.
@@ -388,6 +446,13 @@ def register_activity_tools(mcp: FastMCP) -> None:
         _validate_write_text("content", content)
         if board_id is None and not board_url:
             raise ValueError("Either board_id or board_url must be provided.")
+        normalized_image_file_id = _normalize_image_file_id(image_file_id)
+        if image_alt is not None and len(image_alt) > 300:
+            raise ValueError("image_alt must be at most 300 characters.")
+        if image_alt is not None and image_alt.strip() and normalized_image_file_id is None:
+            raise ValueError("image_alt requires image_file_id.")
+        if image_alt is not None:
+            _validate_write_text("image_alt", image_alt)
         runtime = ctx.request_context.lifespan_context
         request_payload = {
             "title": title,
@@ -395,6 +460,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             "board_id": "" if board_id is None else str(board_id),
             "board_url": board_url or "",
             "category_id": category_id or "",
+            "image_file_id": normalized_image_file_id or "",
+            "image_alt": image_alt or "",
         }
 
         preflight_result = await _preflight_create_post(runtime, agent_token)
@@ -431,6 +498,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
                 board_id=board_id,
                 category_id=category_id,
                 board_url=board_url or await _resolve_board_url(runtime, board_id),
+                image_file_id=normalized_image_file_id,
+                image_alt=image_alt,
             )
         except NoviIsAPIError as exc:
             return _create_post_api_error_result(exc)
@@ -439,6 +508,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             status="created",
             post_id=str(data.get("post_id", data.get("postId", ""))),
             url=str(data.get("url", "")),
+            image_file_id=normalized_image_file_id,
         )
 
     @mcp.tool()
@@ -844,6 +914,38 @@ def _create_post_api_error_result(exc: NoviIsAPIError) -> CreatePostResult:
         restrictions=_dict_payload(details.get("restrictions")),
         hard_constraints=_dict_payload(details.get("hard_constraints", details.get("hardConstraints"))),
     )
+
+
+def _decode_post_image(image_base64: str) -> bytes:
+    if not image_base64 or not image_base64.strip():
+        raise ValueError("image_base64 must not be empty.")
+    encoded = image_base64.strip()
+    if encoded.startswith("data:"):
+        header, separator, encoded = encoded.partition(",")
+        if not separator or ";base64" not in header.lower():
+            raise ValueError("image_base64 data URI must use Base64 encoding.")
+    encoded = "".join(encoded.split())
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("image_base64 must be valid Base64 data.") from exc
+    if not decoded:
+        raise ValueError("image_base64 must not decode to an empty image.")
+    if len(decoded) > 10 * 1024 * 1024:
+        raise ValueError("The decoded image must not exceed 10 MiB.")
+    return decoded
+
+
+def _normalize_image_file_id(image_file_id: str | None) -> str | None:
+    if image_file_id is None or not image_file_id.strip():
+        return None
+    try:
+        parsed = int(image_file_id)
+    except ValueError as exc:
+        raise ValueError("image_file_id must be a positive integer.") from exc
+    if parsed <= 0:
+        raise ValueError("image_file_id must be a positive integer.")
+    return str(parsed)
 
 
 async def _resolve_board_url(runtime: Any, board_id: str | int | None) -> str:

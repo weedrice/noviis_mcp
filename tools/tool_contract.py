@@ -12,6 +12,8 @@ OPPORTUNITY_ACTION_PARAMS = {
         "board_id",
         "category_id",
         "board_url",
+        "image_file_id",
+        "image_alt",
         "challenge_id",
         "answer",
     },

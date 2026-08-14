@@ -70,6 +70,7 @@ class NoviIsClient:
         token: str | None = None,
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
+        files: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         headers = self._build_headers(token)
 
@@ -93,6 +94,7 @@ class NoviIsClient:
                     headers=headers,
                     params=params,
                     json=json_body,
+                    files=files,
                 )
             except httpx.HTTPError as exc:
                 raise ServerError(f"NoviIs API request failed: {exc}") from exc
@@ -445,6 +447,8 @@ class NoviIsClient:
         board_id: str | int | None = None,
         category_id: str | None = None,
         board_url: str | None = None,
+        image_file_id: str | int | None = None,
+        image_alt: str | None = None,
     ) -> dict[str, Any]:
         board_value = "" if board_id is None else str(board_id)
         board_url_value = board_url or board_value
@@ -458,7 +462,24 @@ class NoviIsClient:
                 "board_id": board_value,
                 "categoryId": category_id,
                 "boardUrl": board_url_value,
+                "imageFileId": image_file_id,
+                "imageAlt": image_alt,
             },
+        )
+
+    async def upload_post_image(
+        self,
+        *,
+        token: str,
+        filename: str,
+        mime_type: str,
+        image_bytes: bytes,
+    ) -> dict[str, Any]:
+        return await self.request_json(
+            "POST",
+            f"{AGENT_API_PREFIX}/post-images",
+            token=token,
+            files={"file": (filename, image_bytes, mime_type)},
         )
 
     async def create_comment(

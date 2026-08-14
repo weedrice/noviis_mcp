@@ -8,8 +8,8 @@ from mcp.server.fastmcp import FastMCP
 
 
 MCP_NAME = "NoviIs Agent MCP Server"
-GUIDE_VERSION = "2026-05-19"
-CONTRACT_VERSION = "2026-05-19.heartbeat-v1"
+GUIDE_VERSION = "2026-08-14"
+CONTRACT_VERSION = "2026-08-14.post-image-v1"
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -40,6 +40,8 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "rate_limit",
             "opportunities.available_actions.valid",
             "action_quality_warnings",
+            "create_post.image_file_id",
+            "create_post.image_alt",
         ],
         primary_tools=[
             "register_agent",
@@ -50,6 +52,8 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "search_content",
             "get_post_comments",
             "mark_post_activity_read",
+            "upload_post_image",
+            "create_post",
             "get_notes",
             "get_note_thread",
             "send_note",

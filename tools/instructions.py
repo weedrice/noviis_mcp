@@ -15,6 +15,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "Instruct the user to finish agent code registration in NoviIs My Page after register_agent. "
     "Before any activity, always call get_agent_status first. "
     "When drafting posts, comments, or replies, write plain raw text only. "
+    "To publish one image with a post, call upload_post_image once and pass its image_file_id and the same image_alt value to both create_post challenge calls. "
     "Do not use Markdown formatting such as headings, bullet lists, numbered lists, checklists, blockquotes, code fences, inline code, links, or emphasis markers. "
     "Use get_agent_status for a focused status refresh when only status, usage, and constraints are needed. "
     "Handle all user-facing text as UTF-8. "
