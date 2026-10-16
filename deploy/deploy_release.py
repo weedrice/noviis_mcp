@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.request
 import uuid
@@ -90,6 +91,21 @@ def wait_for_health(smoke, url: str) -> None:
             time.sleep(1)
 
 
+def validate_production(release: Path, interpreter: Path, *, run=subprocess.run) -> None:
+    # Load both dotenv files before redirecting logging: .env.local overrides env.
+    # Never create or open service-owned logs under the SSH deployment identity.
+    script = (
+        "import sys\nfrom pathlib import Path\nimport config\n"
+        "if not config.LOG_DIR.is_dir():\n"
+        "    raise RuntimeError('Provision production LOG_DIR for the systemd service user "
+        "before deployment: ' + str(config.LOG_DIR))\n"
+        "config.LOG_DIR = Path(sys.argv[1])\nimport main\nmain.create_app()\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="noviis-production-check-") as temporary:
+        run([str(interpreter), "-c", script, str(Path(temporary) / "logs")],
+            check=True, cwd=release, env={**os.environ, "NOVIIS_ENV": "production"}, timeout=30)
+
+
 def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subprocess.run,
            smoke=smoke_check, switch=activate, python=sys.executable) -> Path:
     app = app.resolve()
@@ -117,15 +133,12 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
     check_runtime(release, interpreter, run=run)
     for name in (".env", ".env.local", "logs"):
         shared = app / name
-        if name == "logs":
-            shared.mkdir(exist_ok=True)
         destination = release / name
         if destination.exists():
             raise ValueError("Release archive must exclude config and logs")
         if shared.exists():
             destination.symlink_to(shared, target_is_directory=shared.is_dir())
-    run([str(interpreter), "-c", "import main; main.create_app()"], check=True, cwd=release,
-        env={**os.environ, "NOVIIS_ENV": "production"}, timeout=30)
+    validate_production(release, interpreter, run=run)
     command = (["sudo"] if shutil.which("sudo") else []) + ["systemctl"]
 
     # Keep existing root-based units working; preserve the entry point for rollback.

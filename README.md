@@ -28,10 +28,10 @@ Deployment flow:
 1. On pull requests and main pushes, CI installs hash-locked build tools and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
 2. The main-only deployment job downloads that verified artifact, checks its SHA-256 and copies it to the WAS over SSH. The server verifies the same archive checksum before executing its helpers.
 3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Shared `.env`, `.env.local`, and `logs` stay in the app root.
-4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and a 30-second MCP initialization/tool-registration check must pass before shared production configuration/logs are attached. This check uses only synthetic settings and temporary logs, without backend requests or a listening port. Production import validation (also limited to 30 seconds) then finishes before an atomic `current` symlink switch and systemd restart. The full regression suite runs in CI, with a 180-second limit.
+4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and a 30-second MCP initialization/tool-registration check must pass before shared production configuration/logs are attached. This check uses only synthetic settings and temporary logs, without backend requests or a listening port. Production import validation (also limited to 30 seconds) loads both dotenv files, requires the configured log directory to exist, and redirects validation logs to a temporary directory before importing the application. It never opens production log files as the deploy user. Validation finishes before an atomic `current` symlink switch and systemd restart. The full regression suite runs in CI, with a 180-second limit.
 5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
 
-Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and shared logs; the service user needs read/execute access to releases and write access to logs. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
+Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and enough directory traversal access to check that the configured log directory exists; it does not need write access to production logs. The service user needs read/execute access to releases and production configuration, plus write/execute access to the log directory and write access to existing log files. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
 
 Required GitHub repository secrets:
 
@@ -53,6 +53,23 @@ Server prerequisites:
 
 Use `deploy/systemd/noviis-mcp.service` as the systemd unit template and adjust
 `WorkingDirectory`, `ExecStart`, `User`, and `Group` for the target server.
+
+Before the first deployment, an administrator must prepare the effective `LOG_DIR`
+from `.env` / `.env.local` for that unit's service identity. For the supplied unit
+and `.env.example` defaults:
+
+```bash
+sudo install -d -o www-data -g www-data -m 0755 /opt/noviis-mcp/logs
+```
+
+Use the actual path and service user/group if customized. Keep `LOG_DIR` at a
+stable shared path outside `releases/`. If earlier deployments created `app.log`,
+`access.log`, or their numbered rotation files under another account, have an
+administrator correct those files' ownership and owner write permissions too,
+preserving their contents. The service needs directory write/execute permissions
+for rotation. Deployment neither creates the production log directory nor changes
+existing log ownership. A missing directory fails validation before activation;
+directory existence alone does not verify service-user permissions or ACLs.
 
 ## Environment
 

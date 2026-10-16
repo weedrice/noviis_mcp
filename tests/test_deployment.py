@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from deploy.deploy_release import activate, deploy, extract_release
+from deploy.deploy_release import activate, deploy, extract_release, validate_production
 from deploy.release_artifact import verification_environment
 
 
@@ -159,6 +159,24 @@ class DeploymentTest(unittest.TestCase):
         switch.assert_not_called()
         self.assertFalse(any("systemctl" in args for args in calls))
 
+    def test_production_validation_failure_does_not_switch_or_restart_service(self):
+        entry = self.app / "main.py"
+        entry.write_bytes(b"# running release")
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            if "-c" in args:
+                raise subprocess.CalledProcessError(1, args)
+
+        switch = Mock()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_deploy(run=run, switch=switch)
+        switch.assert_not_called()
+        self.assertFalse(any("systemctl" in args for args in calls))
+        self.assertEqual(entry.read_bytes(), b"# running release")
+        self.assertFalse((self.app / "logs").exists())
+
     def test_runtime_environment_drops_production_limits_and_credentials(self):
         with patch.dict(os.environ, {
             "MCP_REQUEST_LIMIT": "10", "CHALLENGE_MAX_PENDING": "0", "NOVIIS_ENV": "production",
@@ -186,6 +204,75 @@ class DeploymentTest(unittest.TestCase):
             package.addfile(link)
         with self.assertRaises(ValueError):
             extract_release(self.archive, self.root / "extracted")
+
+
+class ProductionValidationTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.release = self.root / "release"
+        self.release.mkdir()
+        self.logs = self.root / "custom-production-logs"
+        # A module-level value models config.py overriding the inherited LOG_DIR
+        # while loading .env.local. Validation must redirect after that import.
+        (self.release / "config.py").write_text(
+            "from pathlib import Path\n"
+            f"LOG_DIR = Path({str(self.logs)!r})\n",
+            encoding="utf-8",
+        )
+        (self.release / "main.py").write_text(
+            "from pathlib import Path\n"
+            "import os\n"
+            "import config\n"
+            "assert os.environ['NOVIIS_ENV'] == 'production'\n"
+            "Path('imported-log-dir.txt').write_text(str(config.LOG_DIR), encoding='utf-8')\n"
+            "config.LOG_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "for name in ('app.log', 'access.log'):\n"
+            "    with (config.LOG_DIR / name).open('a', encoding='utf-8') as output:\n"
+            "        output.write('validation log\\n')\n"
+            "def create_app():\n"
+            "    Path('app-created.txt').write_text('created', encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+
+    def test_custom_production_logs_are_untouched_and_temporary_logs_are_removed(self):
+        self.logs.mkdir()
+        for name in ("app.log", "access.log", "app.log.1"):
+            (self.logs / name).write_bytes(b"existing production log\n")
+        before = {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode)
+            for path in self.logs.iterdir()
+        }
+        directory_mtime = self.logs.stat().st_mtime_ns
+
+        validate_production(self.release, Path(sys.executable))
+
+        after = {
+            path.name: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_mode)
+            for path in self.logs.iterdir()
+        }
+        self.assertEqual(before, after)
+        self.assertEqual(self.logs.stat().st_mtime_ns, directory_mtime)
+        temporary_logs = Path((self.release / "imported-log-dir.txt").read_text(encoding="utf-8"))
+        self.assertNotEqual(temporary_logs, self.logs)
+        self.assertTrue(temporary_logs.parent.name.startswith("noviis-production-check-"))
+        self.assertFalse(temporary_logs.exists())
+        self.assertFalse(temporary_logs.parent.exists())
+        self.assertTrue((self.release / "app-created.txt").is_file())
+        self.assertFalse((self.release / "logs").exists())
+
+    def test_unprovisioned_production_logs_fail_before_importing_application(self):
+        def run(args, **kwargs):
+            return subprocess.run(args, **kwargs, capture_output=True, text=True)
+
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            validate_production(self.release, Path(sys.executable), run=run)
+
+        self.assertIn("Provision production LOG_DIR", failure.exception.stderr)
+        self.assertFalse(self.logs.exists())
+        self.assertFalse((self.release / "imported-log-dir.txt").exists())
+        self.assertFalse((self.release / "app-created.txt").exists())
 
 
 @unittest.skipIf(os.name == "nt", "POSIX deployment symlink semantics")
