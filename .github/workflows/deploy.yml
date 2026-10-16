@@ -24,7 +24,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install locked build tools
-        run: python -m pip install --require-hashes -r requirements-build.lock
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r requirements-installer.lock
+          python -m pip --version
+          python -m pip install --require-hashes -r requirements-build.lock
       - name: Build and test the portable release bundle
         run: python scripts/build_release.py --revision "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4

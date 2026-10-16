@@ -31,7 +31,7 @@ def build(output: Path, revision: str) -> None:
         for folder in ("tools", "tests", "deploy", "scripts"):
             shutil.copytree(ROOT / folder, root / folder,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        for name in ("pyproject.toml", "README.md", ".env.example", "requirements.lock"):
+        for name in ("pyproject.toml", "README.md", ".env.example", "requirements.lock", "requirements-installer.lock"):
             shutil.copy2(ROOT / name, root)
         wheels = root / "wheelhouse"
         wheels.mkdir()
