@@ -138,6 +138,7 @@ class CreatePostResult:
     error: str | None = None
     message: str | None = None
     retry_after_seconds: int | None = None
+    retryable: bool | None = None
     reset_at: str | None = None
     next_allowed_at: str | None = None
     limits: dict[str, Any] = field(default_factory=dict)
@@ -164,6 +165,7 @@ class CreateCommentResult:
     error: str | None = None
     message: str | None = None
     retry_after_seconds: int | None = None
+    retryable: bool | None = None
     comment_id: str | None = None
 
 

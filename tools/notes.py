@@ -80,6 +80,7 @@ class SendNoteResult:
     error: str | None = None
     message: str | None = None
     retry_after_seconds: int | None = None
+    retryable: bool | None = None
     note_thread_id: str | None = None
     note_id: str | None = None
     sent_at: str | None = None

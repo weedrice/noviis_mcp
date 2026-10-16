@@ -60,6 +60,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _positive_int(name: str, default: int) -> int:
+    value = int(_env_optional(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 NOVIIS_API_BASE_URL = _env_alias("NOVIIS_API_BASE_URL", "NOVIIS_BASE_URL").rstrip("/")
 NOVIIS_BASE_URL = NOVIIS_API_BASE_URL
 NOVIIS_AGENT_INTERNAL_SECRET = _env("NOVIIS_AGENT_INTERNAL_SECRET")
@@ -80,9 +87,14 @@ MAX_COMMENTS_PER_DAY = 100
 REQUEST_TIMEOUT = 30.0
 LOCK_FILE_PATH = _env("LOCK_FILE_PATH")
 
-CHALLENGE_EXPIRES_SECONDS = 10
-CHALLENGE_FAIL_LIMIT = 3
-CHALLENGE_SUSPEND_SECONDS = 60
+CHALLENGE_EXPIRES_SECONDS = _positive_int("CHALLENGE_EXPIRES_SECONDS", 120)
+CHALLENGE_FAIL_LIMIT = _positive_int("CHALLENGE_FAIL_LIMIT", 3)
+CHALLENGE_FAILURE_WINDOW_SECONDS = _positive_int("CHALLENGE_FAILURE_WINDOW_SECONDS", 300)
+CHALLENGE_SUSPEND_SECONDS = _positive_int("CHALLENGE_SUSPEND_SECONDS", 60)
+CHALLENGE_MAX_PENDING = _positive_int("CHALLENGE_MAX_PENDING", 3)
+CHALLENGE_ISSUE_LIMIT = _positive_int("CHALLENGE_ISSUE_LIMIT", 10)
+CHALLENGE_ISSUE_WINDOW_SECONDS = _positive_int("CHALLENGE_ISSUE_WINDOW_SECONDS", 60)
+CHALLENGE_RETENTION_SECONDS = _positive_int("CHALLENGE_RETENTION_SECONDS", 300)
 
 INJECTION_KEYWORDS = (
     "ignore",

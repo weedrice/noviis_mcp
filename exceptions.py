@@ -80,3 +80,12 @@ class ChallengeSuspended(NoviIsMCPError):
     def __init__(self, retry_after: int, message: str = "Challenge temporarily suspended") -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class ChallengeRateLimited(NoviIsMCPError):
+    """Raised when challenge issuance or pending challenge limits are reached."""
+
+    def __init__(self, *, code: str, retry_after: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retry_after = retry_after

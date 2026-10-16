@@ -1,20 +1,30 @@
 from __future__ import annotations
 
+import math
 import random
+import re
+import time
 import uuid
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any
+from typing import Any, Literal
 
 from config import (
     CHALLENGE_EXPIRES_SECONDS,
     CHALLENGE_FAIL_LIMIT,
+    CHALLENGE_FAILURE_WINDOW_SECONDS,
+    CHALLENGE_ISSUE_LIMIT,
+    CHALLENGE_ISSUE_WINDOW_SECONDS,
+    CHALLENGE_MAX_PENDING,
+    CHALLENGE_RETENTION_SECONDS,
     CHALLENGE_SUSPEND_SECONDS,
 )
 from exceptions import (
     ChallengeExpired,
     ChallengeFailed,
+    ChallengeRateLimited,
     ChallengeSuspended,
     ChallengeUsed,
 )
@@ -31,6 +41,7 @@ class ChallengePrompt:
     challenge_id: str
     challenge_text: str
     expires_in_seconds: int
+    answer_format: str = "Decimal number rounded to two places using ROUND_HALF_UP."
 
 
 @dataclass
@@ -39,20 +50,25 @@ class ChallengeRecord:
     action: str
     payload: dict[str, Any]
     answer: str
-    expires_at: datetime
-    used: bool = False
+    expires_at: float
+    status: Literal["pending", "used", "expired", "failed"] = "pending"
+    finished_at: float | None = None
 
 
 @dataclass
-class FailureState:
-    failures: int = 0
-    suspended_until: datetime | None = None
+class OwnerState:
+    failures: list[float] = field(default_factory=list)
+    issued_at: list[float] = field(default_factory=list)
+    suspended_until: float | None = None
 
 
 class ChallengeManager:
-    def __init__(self) -> None:
+    """Process-local state, accessed synchronously from the async MCP tools."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
         self._challenges: dict[str, ChallengeRecord] = {}
-        self._failures: dict[str, FailureState] = {}
+        self._owners: dict[str, OwnerState] = {}
 
     def issue_challenge(
         self,
@@ -61,23 +77,37 @@ class ChallengeManager:
         action: str,
         payload: dict[str, Any],
     ) -> ChallengePrompt:
-        self._cleanup()
-        state = self._failures.setdefault(owner_key, FailureState())
-        now = _now()
-        if state.suspended_until and state.suspended_until > now:
-            retry_after = int((state.suspended_until - now).total_seconds())
-            raise ChallengeSuspended(retry_after=max(1, retry_after))
+        now = self._clock()
+        self._cleanup(now)
+        state = self._owners.setdefault(owner_key, OwnerState())
+        self._check_suspension(state, now)
+        if len(state.issued_at) >= CHALLENGE_ISSUE_LIMIT:
+            raise ChallengeRateLimited(
+                code="challenge_issue_limit",
+                retry_after=_seconds_until(state.issued_at[0] + CHALLENGE_ISSUE_WINDOW_SECONDS, now),
+                message="Challenge issuance limit reached. Wait before requesting another challenge.",
+            )
+        pending = [
+            record for record in self._challenges.values()
+            if record.owner_key == owner_key and record.status == "pending"
+        ]
+        if len(pending) >= CHALLENGE_MAX_PENDING:
+            raise ChallengeRateLimited(
+                code="challenge_pending_limit",
+                retry_after=_seconds_until(min(record.expires_at for record in pending), now),
+                message="Too many pending challenges. Complete an existing challenge or wait for expiry.",
+            )
 
         left, right, operation = _random_expression()
-        answer = _calculate_answer(left, right, operation)
         challenge_id = str(uuid.uuid4())
         self._challenges[challenge_id] = ChallengeRecord(
             owner_key=owner_key,
             action=action,
-            payload=dict(payload),
-            answer=answer,
-            expires_at=now + timedelta(seconds=CHALLENGE_EXPIRES_SECONDS),
+            payload=deepcopy(payload),
+            answer=_calculate_answer(left, right, operation),
+            expires_at=now + CHALLENGE_EXPIRES_SECONDS,
         )
+        state.issued_at.append(now)
         return ChallengePrompt(
             challenge_id=challenge_id,
             challenge_text=_obfuscate_expression(left, right, operation),
@@ -93,60 +123,79 @@ class ChallengeManager:
         answer: str,
         payload: dict[str, Any],
     ) -> None:
-        self._cleanup()
-        state = self._failures.setdefault(owner_key, FailureState())
-        now = _now()
-        if state.suspended_until and state.suspended_until > now:
-            retry_after = int((state.suspended_until - now).total_seconds())
-            raise ChallengeSuspended(retry_after=max(1, retry_after))
-
+        now = self._clock()
+        self._cleanup(now)
+        state = self._owners.setdefault(owner_key, OwnerState())
+        self._check_suspension(state, now)
         record = self._challenges.get(challenge_id)
         if record is None:
-            self._mark_failure(owner_key)
+            self._mark_failure(state, now)
             raise ChallengeFailed("Unknown challenge_id. Request a new challenge.")
-        if record.used:
-            self._mark_failure(owner_key)
-            raise ChallengeUsed("This challenge was already used. Request a new challenge.")
-        if record.expires_at < now:
-            self._mark_failure(owner_key)
-            raise ChallengeExpired("The challenge expired. Request a new challenge.")
-        if record.owner_key != owner_key or record.action != action or record.payload != dict(payload):
-            self._mark_failure(owner_key)
+        # Check ownership before disclosing state or invalidating another owner's challenge.
+        if record.owner_key != owner_key:
+            self._mark_failure(state, now)
             raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
+        if record.action != action or record.payload != payload:
+            if record.status == "pending":
+                self._finish(record, "failed", now)
+            self._mark_failure(state, now)
+            raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
+        if record.status == "used":
+            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+        if record.status == "expired":
+            raise ChallengeExpired("The challenge expired. Request a new challenge.")
+        if record.status == "failed":
+            self._mark_failure(state, now)
+            raise ChallengeFailed("This challenge failed. Request a new challenge.")
 
-        normalized_answer = _normalize_answer(answer)
+        try:
+            normalized_answer = _normalize_answer(answer)
+        except ChallengeFailed:
+            self._finish(record, "failed", now)
+            self._mark_failure(state, now)
+            raise
         if normalized_answer != record.answer:
-            self._mark_failure(owner_key)
+            self._finish(record, "failed", now)
+            self._mark_failure(state, now)
             raise ChallengeFailed("Incorrect challenge answer. Request a new challenge.")
+        self._finish(record, "used", now)
+        # Successful answers do not erase other failures in the rolling window.
 
-        record.used = True
-        self._failures[owner_key] = FailureState()
+    @staticmethod
+    def _finish(record: ChallengeRecord, status: Literal["used", "expired", "failed"], now: float) -> None:
+        record.status = status
+        record.finished_at = now
 
-    def _mark_failure(self, owner_key: str) -> None:
-        state = self._failures.setdefault(owner_key, FailureState())
-        state.failures += 1
-        if state.failures >= CHALLENGE_FAIL_LIMIT:
-            state.failures = 0
-            state.suspended_until = _now() + timedelta(seconds=CHALLENGE_SUSPEND_SECONDS)
+    @staticmethod
+    def _check_suspension(state: OwnerState, now: float) -> None:
+        if state.suspended_until is not None and state.suspended_until > now:
+            raise ChallengeSuspended(retry_after=_seconds_until(state.suspended_until, now))
+
+    @staticmethod
+    def _mark_failure(state: OwnerState, now: float) -> None:
+        state.failures.append(now)
+        if len(state.failures) >= CHALLENGE_FAIL_LIMIT:
+            state.failures.clear()
+            state.suspended_until = now + CHALLENGE_SUSPEND_SECONDS
             raise ChallengeSuspended(retry_after=CHALLENGE_SUSPEND_SECONDS)
 
-    def _cleanup(self) -> None:
-        now = _now()
-        expired_ids = [
-            challenge_id
-            for challenge_id, record in self._challenges.items()
-            if record.expires_at < now or record.used
-        ]
-        for challenge_id in expired_ids:
-            self._challenges.pop(challenge_id, None)
+    def _cleanup(self, now: float) -> None:
+        for challenge_id, record in list(self._challenges.items()):
+            if record.status == "pending" and record.expires_at <= now:
+                self._finish(record, "expired", record.expires_at)
+            if record.finished_at is not None and now >= record.finished_at + CHALLENGE_RETENTION_SECONDS:
+                del self._challenges[challenge_id]
+        for owner_key, state in list(self._owners.items()):
+            state.failures = [stamp for stamp in state.failures if stamp > now - CHALLENGE_FAILURE_WINDOW_SECONDS]
+            state.issued_at = [stamp for stamp in state.issued_at if stamp > now - CHALLENGE_ISSUE_WINDOW_SECONDS]
+            if state.suspended_until is not None and state.suspended_until <= now:
+                state.suspended_until = None
+            if not state.failures and not state.issued_at and state.suspended_until is None:
+                del self._owners[owner_key]
 
-        expired_suspensions = [
-            key
-            for key, state in self._failures.items()
-            if state.suspended_until is not None and state.suspended_until <= now
-        ]
-        for key in expired_suspensions:
-            self._failures[key] = FailureState()
+
+def _seconds_until(deadline: float, now: float) -> int:
+    return max(1, math.ceil(deadline - now))
 
 
 def _random_expression() -> tuple[int, int, str]:
@@ -171,11 +220,22 @@ def _calculate_answer(left: int, right: int, operation: str) -> str:
 
 
 def _normalize_answer(answer: str) -> str:
+    # Bound work before Decimal parsing; exponent notation and special values are not answers.
+    if not isinstance(answer, str) or len(answer) > 64:
+        raise ChallengeFailed("Challenge answer must be a decimal string of at most 64 characters.")
+    value = answer.strip()
+    if not re.fullmatch(r"[+-]?[0-9]+(?:\.[0-9]+)?", value):
+        raise ChallengeFailed("Challenge answer must be a finite decimal number.")
     try:
-        numeric = Decimal(answer.strip())
-    except (InvalidOperation, AttributeError):
-        raise ChallengeFailed("Challenge answer must be a numeric string.") from None
-    return str(numeric.quantize(_QUANTIZER, rounding=ROUND_HALF_UP))
+        numeric = Decimal(value)
+        if not numeric.is_finite() or abs(numeric) > 10000:
+            raise ChallengeFailed("Challenge answer is outside the supported range.")
+        rounded = numeric.quantize(_QUANTIZER, rounding=ROUND_HALF_UP)
+        if rounded == 0:
+            rounded = abs(rounded)
+        return str(rounded)
+    except InvalidOperation:
+        raise ChallengeFailed("Challenge answer must be a finite decimal number.") from None
 
 
 def _obfuscate_expression(left: int, right: int, operation: str) -> str:
@@ -255,7 +315,3 @@ def _number_to_words(value: int) -> str:
     if remainder == 0:
         return f"{below_twenty[hundreds]} hundred"
     return f"{below_twenty[hundreds]} hundred {_number_to_words(remainder)}"
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
