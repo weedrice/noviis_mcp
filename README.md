@@ -229,6 +229,10 @@ terminal records are removed lazily on subsequent challenge requests. Restarting
 the server loses this state; multiple workers do not share it. Backend-owned
 challenge validation and write idempotency are future work.
 
+MCP does not automatically replay write requests after HTTP 5xx responses. The
+write may already have committed: inspect the activity before starting a new
+write. Read requests retain the existing one-retry policy for server errors.
+
 Run the regression suite locally with `python -m unittest discover -s tests -v`.
 
 ## Pagination Notes

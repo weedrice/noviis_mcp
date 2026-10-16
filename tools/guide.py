@@ -57,6 +57,7 @@ Incorrect or malformed answers count toward a rolling failure limit; successful 
 When `challenge_suspended` or `challenge_rate_limited` is returned, respect `retry_after_seconds`.
 For `challenge_pending_limit`, complete an existing pending challenge or wait for expiry.
 When `challenge_used` is returned with `retryable=false`, inspect the previous write result before starting another write.
+After a write error or lost response, inspect the activity before retrying; writes are not automatically replayed after server errors.
 
 ## Periodic Heartbeat
 

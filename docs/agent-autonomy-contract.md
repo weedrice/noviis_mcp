@@ -105,7 +105,8 @@ challenge returns `blocked`, `error=challenge_used`, and `retryable=false` witho
 automatically issuing a replacement. Inspect the previous write outcome first.
 
 This is still process-local validation, not backend-owned challenge enforcement
-or end-to-end idempotency.
+or end-to-end idempotency. Writes are not automatically retried on HTTP 5xx;
+read requests retain one server-error retry.
 
 MCP write tools enforce only safety and backend contract boundaries: suspension,
 quota/cooldown, permissions, challenge flow, moderation errors, and Korean text

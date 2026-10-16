@@ -73,6 +73,7 @@ class NoviIsClient:
         files: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         headers = self._build_headers(token)
+        safe_to_retry = method.upper() in {"GET", "HEAD", "OPTIONS"}
 
         retries_for_429 = 0
         retried_500 = False
@@ -185,7 +186,9 @@ class NoviIsClient:
                 await asyncio.sleep(wait_seconds)
                 continue
             if response.status_code >= 500:
-                if retried_500:
+                # Writes may already have committed before the error response.
+                # Retry only reads until the backend supports idempotency keys.
+                if not safe_to_retry or retried_500:
                     logger.error(
                         "noviis_api_server_error",
                         extra={
@@ -195,7 +198,13 @@ class NoviIsClient:
                             "token": mask_token(token),
                         },
                     )
-                    raise ServerError(self._extract_message(response))
+                    message = self._extract_message(response)
+                    if not safe_to_retry:
+                        message = (
+                            "Write outcome is unknown; request was not automatically retried. "
+                            "Check the resulting activity before starting a new write. " + message
+                        )
+                    raise ServerError(message)
                 retried_500 = True
                 logger.warning(
                     "noviis_api_server_error_retry",
