@@ -14,6 +14,12 @@ import urllib.request
 import uuid
 
 
+if __package__:
+    from .release_artifact import install_release, verify_release
+else:
+    from release_artifact import install_release, verify_release
+
+
 def extract_release(archive: Path, destination: Path) -> None:
     with tarfile.open(archive, "r:gz") as package:
         for member in package.getmembers():
@@ -99,6 +105,7 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
     release = app / "releases" / (time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
     release.mkdir(parents=True)
     extract_release(archive, release)
+    verify_release(release)
     for required in ("main.py", "pyproject.toml", "tools/__init__.py"):
         if not (release / required).is_file():
             raise ValueError("Release is missing required application files")
@@ -111,9 +118,7 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
             raise ValueError("Release archive must exclude config and logs")
         if shared.exists():
             destination.symlink_to(shared, target_is_directory=shared.is_dir())
-    interpreter = release / ".venv/bin/python"
-    run([python, "-m", "venv", str(release / ".venv")], check=True)
-    run([str(interpreter), "-m", "pip", "install", str(release)], check=True, cwd=release)
+    interpreter = install_release(release, run=run, python=python)
     run([str(interpreter), "-c", "import main; main.create_app()"], check=True, cwd=release,
         env={**os.environ, "NOVIIS_ENV": "production"})
     command = (["sudo"] if shutil.which("sudo") else []) + ["systemctl"]

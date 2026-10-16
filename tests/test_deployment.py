@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import json
+import platform
+import sys
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +14,22 @@ import unittest
 from unittest.mock import Mock, patch
 
 from deploy.deploy_release import activate, deploy, extract_release
+
+
+def bundle(archive, files, *, tamper=False):
+    files = {**files, "requirements.install.lock": b"# locked test fixture",
+             "wheelhouse/noviis_mcp-0.1.0-py3-none-any.whl": b"synthetic wheel"}
+    manifest = {"format": 1, "revision": "test", "python": "3.11", "system": platform.system(),
+                "machine": platform.machine(),
+                "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    files["release-manifest.json"] = json.dumps(manifest).encode()
+    if tamper:
+        files["main.py"] = b"changed after CI"
+    with tarfile.open(archive, "w:gz") as package:
+        for name, contents in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(contents)
+            package.addfile(info, io.BytesIO(contents))
 
 
 class DeploymentTest(unittest.TestCase):
@@ -30,11 +50,7 @@ class DeploymentTest(unittest.TestCase):
         self.addCleanup(sleeper.stop)
 
     def make_archive(self, files):
-        with tarfile.open(self.archive, "w:gz") as package:
-            for name, contents in files.items():
-                info = tarfile.TarInfo(name)
-                info.size = len(contents)
-                package.addfile(info, io.BytesIO(contents))
+        bundle(self.archive, files)
 
     def run_deploy(self, **kwargs):
         return deploy(self.app, self.archive, "test.service", "http://127.0.0.1/mcp", **kwargs)
@@ -49,7 +65,10 @@ class DeploymentTest(unittest.TestCase):
             events.append(("switch", target))
             self.assertTrue((target / "main.py").is_file())
         release = self.run_deploy(run=run, switch=switch, smoke=lambda _: events.append(("smoke", None)))
-        self.assertEqual([event[0] for event in events], ["run", "run", "run", "switch", "run", "smoke", "run"])
+        self.assertEqual([event[0] for event in events], ["run", "run", "run", "run", "switch", "run", "smoke", "run"])
+        install = events[1][1]
+        for flag in ("--no-index", "--require-hashes", "--only-binary=:all:"):
+            self.assertIn(flag, install)
         self.assertTrue(release.is_relative_to(self.app / "releases"))
         self.assertIn('"current"', (self.app / "main.py").read_text(encoding="utf-8"))
 
@@ -92,6 +111,19 @@ class DeploymentTest(unittest.TestCase):
                 run.assert_not_called()
         self.assertFalse((self.root / "outside.py").exists())
 
+    def test_modified_artifact_and_wrong_platform_never_install_or_activate(self):
+        files = {"main.py": b"", "pyproject.toml": b"", "tools/__init__.py": b""}
+        run, switch = Mock(), Mock()
+        bundle(self.archive, files, tamper=True)
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            self.run_deploy(run=run, switch=switch)
+        bundle(self.archive, files)
+        with patch("deploy.release_artifact.platform.machine", return_value="wrong-platform"):
+            with self.assertRaisesRegex(ValueError, "platform"):
+                self.run_deploy(run=run, switch=switch)
+        run.assert_not_called()
+        switch.assert_not_called()
+
     def test_archive_symlink_is_rejected(self):
         with tarfile.open(self.archive, "w:gz") as package:
             link = tarfile.TarInfo("outside")
@@ -113,9 +145,7 @@ class AtomicSwitchTest(unittest.TestCase):
             (app / ".env").write_bytes(b"# shared config")
             activate(app / "current", old)
             archive = app / "release.tgz"
-            with tarfile.open(archive, "w:gz") as package:
-                for name in ("main.py", "pyproject.toml", "tools/__init__.py"):
-                    package.addfile(tarfile.TarInfo(name), io.BytesIO())
+            bundle(archive, {"main.py": b"", "pyproject.toml": b"", "tools/__init__.py": b""})
             smoke = Mock(side_effect=[RuntimeError("new release failed")] * 10 + [None])
             with patch("deploy.deploy_release.time.sleep"), self.assertRaisesRegex(RuntimeError, "new release failed"):
                 deploy(app, archive, "test.service", "http://127.0.0.1/mcp", run=Mock(), smoke=smoke)

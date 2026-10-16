@@ -8,3 +8,4 @@
 .gitignore text eol=lf
 
 tests/fixtures/backend/*.json text eol=lf
+*.lock text eol=lf

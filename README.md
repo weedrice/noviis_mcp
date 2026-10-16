@@ -25,10 +25,10 @@ for deploying to a Linux WAS over SSH.
 
 Deployment flow:
 
-1. GitHub Actions installs dependencies, compiles the source, runs the unit tests, and builds a release archive.
-2. The archive is copied to the WAS over SSH.
+1. On pull requests and main pushes, CI installs hash-locked build tools, downloads the locked runtime wheels, and builds the application wheel. It creates an archive, installs that exact bundle offline into a fresh virtualenv, and runs all tests there before publishing the archive.
+2. The main-only deployment job downloads that verified artifact, checks its SHA-256 and copies it to the WAS over SSH. The server verifies the same archive checksum before executing its helpers.
 3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Shared `.env`, `.env.local`, and `logs` stay in the app root.
-4. Dependency installation and production import validation finish before an atomic `current` symlink switch and systemd restart.
+4. The file manifest, Python minor version and OS/architecture are checked. Dependencies are installed with `--no-index --require-hashes` from the bundled wheelhouse, followed by `pip check`. Production import validation finishes before an atomic `current` symlink switch and systemd restart.
 5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
 
 Deployment takes an application-local file lock; Actions runs are serialized and use unique remote archives. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and shared logs; the service user needs read/execute access to releases and write access to logs. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
@@ -41,10 +41,11 @@ Required GitHub repository secrets:
 - `DEPLOY_PORT`: optional, defaults to `22`
 - `DEPLOY_PATH`: optional, defaults to `/opt/noviis-mcp`
 - `DEPLOY_SERVICE_NAME`: optional, defaults to `noviis-mcp.service`
+- `DEPLOY_HEALTH_URL`: optional, defaults to `http://127.0.0.1:8001/mcp`
 
 Server prerequisites:
 
-- Python 3.11+
+- Python 3.11 (`python3.11`, or set `PYTHON_BIN`); Linux architecture matching the CI wheel bundle
 - `systemd`
 - passwordless `sudo systemctl` for the deploy user, or direct `systemctl` access
 - an existing production `.env` file in the deploy path
@@ -413,6 +414,7 @@ delete flags and valid like counts. HTTP 200 error envelopes and malformed
 success bodies raise `backend_contract_error`; only a real HTTP 204 DELETE can
 confirm deletion without a response body.
 
+
 ## Reading Conversations
 
 Feed and board-post results preserve the full backend `content`. `content_preview`
@@ -454,3 +456,26 @@ python -m unittest discover -s tests -p test_backend_contract.py -v
 
 CI uses the committed snapshot and does not silently fetch a changing backend
 branch. Update both repositories together when their wire contract changes.
+
+## Reproducible Linux Releases
+
+`requirements.lock` locks runtime dependencies and hashes for Python 3.11/Linux;
+`requirements-build.lock` locks the build toolchain. Windows development can still
+use the project's normal installation; the deployment lock targets Linux wheels.
+To deliberately refresh pins, use pip-tools 7.6.2 on Python 3.11/Linux:
+
+```bash
+python -m piptools compile --generate-hashes --allow-unsafe --strip-extras --output-file requirements.lock pyproject.toml
+python -m piptools compile --generate-hashes --allow-unsafe --output-file requirements-build.lock requirements-build.in
+python -m pip install --require-hashes -r requirements-build.lock
+python scripts/build_release.py --revision "$(git rev-parse HEAD)" --output dist/release.tgz
+```
+
+pip-compile preserves existing pins; use `--upgrade` deliberately when updating
+runtime dependencies, then review the lock diff and test the bundle. Choose a
+fresh output path for each local build. The server needs no package-index access.
+For a manual deployment, pass `ARCHIVE_SHA256` from the verified `.sha256` file to
+`deploy/deploy.sh` along with `APP_DIR` and `ARCHIVE_PATH`. Keep source, wheelhouse,
+install lock, and release manifest together; modified or incompatible bundles
+are rejected before activation. Python/OS/architecture changes require rebuilding
+and verifying a matching artifact.
