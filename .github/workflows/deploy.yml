@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Serialize main from build through activation; never interrupt an active deploy.
+concurrency:
+  group: production-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -20,7 +25,7 @@ jobs:
           python-version: "3.11"
       - name: Install locked build tools
         run: python -m pip install --require-hashes -r requirements-build.lock
-      - name: Build and test the offline release bundle
+      - name: Build and test the portable release bundle
         run: python scripts/build_release.py --revision "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
         with:
@@ -34,9 +39,6 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    concurrency:
-      group: production-deploy
-      cancel-in-progress: false
     env:
       ARCHIVE_PATH: /tmp/noviis-mcp-${{ github.run_id }}-${{ github.run_attempt }}.tgz
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
@@ -66,10 +68,14 @@ jobs:
           printf '%s' "$EC2_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "$DEPLOY_PORT" "$EC2_HOST" >> ~/.ssh/known_hosts
-      - name: Upload tested release archive
-        run: scp -P "$DEPLOY_PORT" dist/release.tgz "$EC2_USER@$EC2_HOST:$ARCHIVE_PATH"
-      - name: Run remote deploy without dependency resolution
+      - name: Deploy only the current main revision
         run: |
+          LATEST_SHA="$(git ls-remote --exit-code origin refs/heads/main | cut -f 1)"
+          if [ "$GITHUB_SHA" != "$LATEST_SHA" ]; then
+            echo "Skipping superseded revision $GITHUB_SHA; main is $LATEST_SHA"
+            exit 0
+          fi
+          scp -P "$DEPLOY_PORT" dist/release.tgz "$EC2_USER@$EC2_HOST:$ARCHIVE_PATH"
           ARCHIVE_SHA256="$(cut -d ' ' -f 1 dist/release.tgz.sha256)"
           ssh -p "$DEPLOY_PORT" "$EC2_USER@$EC2_HOST" \
             "APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' HEALTH_URL='$HEALTH_URL' ARCHIVE_PATH='$ARCHIVE_PATH' ARCHIVE_SHA256='$ARCHIVE_SHA256' bash -s" \
