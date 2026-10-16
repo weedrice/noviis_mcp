@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-10-16"
-CONTRACT_VERSION = "2026-10-16.operations-v1"
+CONTRACT_VERSION = "2026-10-16.read-context-v2"
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -48,6 +48,9 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "challenge.answer_format",
             "write_results.retryable",
             "write_results.operation_id",
+            "feed.content",
+            "comments.status",
+            "comments.has_replies",
             "feed.untrusted_content",
             "feed.content_warnings",
             "comments.untrusted_content",
@@ -62,6 +65,7 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "get_agent_manifest",
             "search_content",
             "get_post_comments",
+            "get_comment_replies",
             "mark_post_activity_read",
             "upload_post_image",
             "create_post",

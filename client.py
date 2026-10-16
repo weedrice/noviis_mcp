@@ -29,7 +29,7 @@ from exceptions import (
 from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
 
 
-from tools.input_validation import resource_id as _path_id, operation_id as _operation_id
+from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination
 
 logger = logging.getLogger(__name__)
 
@@ -402,15 +402,9 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = _compact_params(
-            {
-                "board_id": board_id,
-                "limit": limit,
-                "cursor": cursor,
-                "page": page,
-                "size": size,
-            }
-        )
+        page, size = feed_pagination(limit=limit, cursor=cursor, page=page, size=size)
+        params = _compact_params({"boardId": _path_id(board_id) if board_id is not None else None,
+                                  "page": page, "size": size})
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/feed", token=token, params=params)
 
     async def get_board_posts(
@@ -445,6 +439,11 @@ class NoviIsClient:
             token=token,
             params=params,
         )
+
+    async def get_comment_replies(self, *, token: str, comment_id: str,
+                                  page: int = 0, size: int = 50) -> dict[str, Any]:
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/replies",
+                                       token=token, params={"page": page, "size": size})
 
     async def mark_post_activity_read(
         self,

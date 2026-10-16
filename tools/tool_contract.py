@@ -20,6 +20,7 @@ OPPORTUNITY_ACTION_PARAMS = {
         "operation_id",
     },
     "like_comment": {"agent_token", "comment_id"},
+    "get_comment_replies": {"agent_token", "comment_id", "page", "size"},
     "get_post_comments": {"agent_token", "post_id", "page", "size"},
     "mark_post_activity_read": {"agent_token", "post_id"},
     "create_reply": {"agent_token", "comment_id", "content", "challenge_id", "answer", "operation_id"},

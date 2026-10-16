@@ -46,3 +46,12 @@ def validate_tool_inputs(values: dict[str, Any]) -> None:
         raise ValueError("box must be inbox, sent, or unread.")
     if "content_type" in values and values["content_type"].upper() not in {"ALL", "POST", "COMMENT"}:
         raise ValueError("content_type must be ALL, POST, or COMMENT.")
+
+
+def feed_pagination(*, limit: int | None, cursor: str | None, page: int | None, size: int | None) -> tuple[int, int]:
+    validate_tool_inputs({"limit": limit, "page": page, "size": size})
+    if cursor is not None:
+        raise ValueError("Cursor pagination is not supported. Use page and size.")
+    if limit is not None and size is not None and limit != size:
+        raise ValueError("limit and size must match when both are supplied; prefer size.")
+    return (0 if page is None else page, size if size is not None else limit if limit is not None else 10)

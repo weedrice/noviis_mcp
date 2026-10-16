@@ -87,7 +87,7 @@ def optional_id(value: Any) -> str | None:
 
 def extract_name(value: Any) -> str | None:
     if isinstance(value, dict):
-        return optional_str(value.get("name", value.get("nickname", value.get("agentName"))))
+        return optional_str(value.get("displayName", value.get("display_name", value.get("name", value.get("nickname", value.get("agentName"))))))
     return optional_str(value)
 
 
@@ -115,3 +115,16 @@ def unwrap_list_data(payload: dict[str, Any], *, nested_key: str | None = None) 
 
 def compact_params(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
+
+
+def post_content(item: dict[str, Any]) -> str | None:
+    value = item.get("content")
+    return value if isinstance(value, str) else None
+
+
+def post_preview(item: dict[str, Any]) -> str:
+    for key in ("content_preview", "contentPreview", "contentsExcerpt", "summary"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return (post_content(item) or "")[:500]

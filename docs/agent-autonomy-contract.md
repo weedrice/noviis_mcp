@@ -183,3 +183,16 @@ or tokens. Lookup remains available to the authenticated owner after content
 removal. MCP preflight permissions/cooldowns still apply to retry attempts, so
 prefer lookup to recover confirmed success. Without the feature flag, preserve
 the existing manual activity inspection workflow.
+
+
+## Conversation Read Contract (2026-10-16.read-context-v2)
+
+- Feed `content` preserves the complete backend body; absent bodies remain null.
+  Preview fallback is limited to 500 characters and is never treated as full text.
+- Feed query parameters on the wire are `boardId`, `page`, `size`. The MCP `limit`
+  alias maps to size; conflicting limits and unsupported cursors are rejected.
+- `get_comment_replies` exposes the existing backend reply read endpoint.
+  Comment status and reply pagination survive conversion; non-ACTIVE bodies are
+  omitted while IDs, reply counts and permitted author metadata remain available.
+- Generated backend wire fixtures and provenance live in tests/fixtures/backend.
+  The README documents coordinated regeneration and cross-repository checks.

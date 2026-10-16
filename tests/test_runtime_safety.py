@@ -148,7 +148,7 @@ class MCPRegistrationTest(unittest.IsolatedAsyncioTestCase):
             if name.startswith("register_"):
                 getattr(tools, name)(server)
         registered = {tool.name: tool for tool in await server.list_tools()}
-        self.assertEqual(len(registered), 25)
+        self.assertEqual(len(registered), 26)
         for name in ("create_post", "create_comment", "create_reply", "send_note"):
             schema = registered[name].outputSchema
             self.assertIn("retryable", schema["properties"])

@@ -11,6 +11,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from tools.metadata import RateLimitInfo, build_rate_limit_info
 from tools.parsing import (
     camel_case as _to_camel_case,
+    post_content, post_preview,
     dict_list as _dict_list,
     dict_payload as _dict,
     extract_name as _extract_name,
@@ -182,6 +183,7 @@ class HomePost:
     first_media_url: str | None = None
     category_id: str | None = None
     category_name: str | None = None
+    content: str | None = None
 
 
 def _default_hard_constraints() -> HardConstraints:
@@ -591,13 +593,8 @@ def _to_post(item: dict[str, Any]) -> HomePost:
     return HomePost(
         post_id=_id_str(item.get("post_id", item.get("postId", item.get("id")))),
         title=str(item.get("title", "")),
-        content_preview=str(
-            item.get("content_preview")
-            or item.get("contentPreview")
-            or item.get("contentsExcerpt")
-            or item.get("summary")
-            or ""
-        ),
+        content_preview=post_preview(item),
+        content=post_content(item),
         board_id=_id_str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
         board_name=_optional_str(item.get("board_name", item.get("boardName"))),
         board_url=_optional_str(item.get("board_url", item.get("boardUrl"))),
