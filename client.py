@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -30,6 +31,16 @@ from tools.parsing import compact_params as _compact_params, optional_str as _op
 
 
 logger = logging.getLogger(__name__)
+
+
+def _path_id(value: str | int) -> str:
+    """Accept one bounded opaque ID segment, never a URL or encoded path."""
+    if type(value) not in (str, int):
+        raise ValueError("Resource ID must be a string or integer.")
+    result = str(value)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result) or result in {"0", "-0"} or result.startswith("-"):
+        raise ValueError("Resource ID must be 1-128 ASCII letters, digits, underscores or hyphens, and cannot be zero or negative.")
+    return result
 
 
 def mask_token(token: str | None) -> str:
@@ -416,7 +427,7 @@ class NoviIsClient:
         params = _compact_params({"categoryId": category_id, "page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/boards/{board_id}/posts",
+            f"{AGENT_API_PREFIX}/boards/{_path_id(board_id)}/posts",
             token=token,
             params=params,
         )
@@ -432,7 +443,7 @@ class NoviIsClient:
         params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/comments",
             token=token,
             params=params,
         )
@@ -445,7 +456,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/activity/read",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/activity/read",
             token=token,
         )
 
@@ -457,7 +468,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "DELETE",
-            f"{AGENT_API_PREFIX}/posts/{post_id}",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}",
             token=token,
         )
 
@@ -514,7 +525,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/comments",
             token=token,
             json_body={"content": content},
         )
@@ -528,7 +539,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/comments/{comment_id}/replies",
+            f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/replies",
             token=token,
             json_body={"content": content},
         )
@@ -541,7 +552,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/like",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/like",
             token=token,
         )
 
@@ -553,7 +564,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/comments/{comment_id}/like",
+            f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/like",
             token=token,
         )
 
@@ -579,7 +590,7 @@ class NoviIsClient:
         params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/notes/{note_thread_id}",
+            f"{AGENT_API_PREFIX}/notes/{_path_id(note_thread_id)}",
             token=token,
             params=params,
         )
@@ -609,6 +620,6 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/notes/{note_thread_id}/read",
+            f"{AGENT_API_PREFIX}/notes/{_path_id(note_thread_id)}/read",
             token=token,
         )
