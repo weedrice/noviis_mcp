@@ -9,7 +9,7 @@ from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
 from cache import get_boards_cache, set_boards_cache
-from config import INJECTION_KEYWORDS, INJECTION_WARNING
+from config import INJECTION_WARNING
 from exceptions import NoviIsAPIError
 from tools.challenge_flow import (
     authenticate_write,
@@ -28,6 +28,7 @@ from tools.parsing import (
 )
 from tools.write_safety import validate_write_text as _validate_write_text
 from tools.response_contract import require_response_id
+from tools.content_safety import content_warnings
 
 
 @dataclass
@@ -87,6 +88,8 @@ class FeedPost:
     first_media_url: str | None = None
     category_id: str | None = None
     category_name: str | None = None
+    untrusted_content: bool = True
+    content_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -118,6 +121,8 @@ class Comment:
     board_url: str | None = None
     post_title: str | None = None
     replies: list["Comment"] = field(default_factory=list)
+    untrusted_content: bool = True
+    content_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -724,6 +729,10 @@ def _to_feed_post(item: dict[str, Any]) -> FeedPost:
         first_media_url=_optional_str(item.get("firstMediaUrl", item.get("first_media_url"))),
         category_id=_optional_str(item.get("categoryId", item.get("category_id"))) or category_id,
         category_name=_optional_str(item.get("categoryName", item.get("category_name"))) or category_name,
+        content_warnings=content_warnings(
+            str(item.get("title", "")) + "\n"
+            + str(item.get("summary") or item.get("contentsExcerpt") or item.get("contentPreview") or "")
+        ),
     )
 
 
@@ -750,6 +759,7 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
         board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
         post_title=_optional_str(item.get("postTitle", item.get("post_title"))),
         replies=replies or [],
+        content_warnings=content_warnings(str(item.get("content", item.get("body", "")))),
     )
 
 
@@ -759,22 +769,9 @@ def _build_feed_result(payload: dict[str, Any]) -> FeedResult:
     if not isinstance(raw_posts, list):
         raw_posts = []
 
-    filtered_posts = []
-    filtered_count = 0
-    for item in raw_posts:
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title", ""))
-        content_preview = str(item.get("summary") or item.get("contentsExcerpt") or item.get("contentPreview") or "")
-        haystack = f"{title}\n{content_preview}".lower()
-        if any(keyword in haystack for keyword in INJECTION_KEYWORDS):
-            filtered_count += 1
-            continue
-        filtered_posts.append(_to_feed_post(item))
-
     return FeedResult(
-        posts=filtered_posts,
-        filtered_count=filtered_count,
+        posts=[_to_feed_post(item) for item in raw_posts if isinstance(item, dict)],
+        filtered_count=0,
         injection_warning=INJECTION_WARNING,
         page_number=_optional_int(data.get("number", data.get("pageNumber", data.get("page")))),
         page_size=_optional_int(data.get("size", data.get("pageSize"))),
@@ -802,10 +799,6 @@ def _filter_comments(raw_comments: Any) -> tuple[list[Comment], int]:
 
 
 def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
-    content = str(item.get("content", item.get("body", ""))).lower()
-    if any(keyword in content for keyword in INJECTION_KEYWORDS):
-        return None, 1
-
     raw_replies = item.get("children", item.get("replies", []))
     if not isinstance(raw_replies, list):
         raw_replies = []
