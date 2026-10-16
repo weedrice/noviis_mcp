@@ -25,7 +25,7 @@ class ResponseContractTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(calls), 1)
 
     async def test_malformed_success_responses_fail_without_retry(self):
-        for body in (b"<html>proxy</html>", b'{"data":', b"", b"null", b'"ok"', b"true", b"1.5", b'{"success":false}'):
+        for body in (b"<html>proxy</html>", b'{"data":', b"", b"null", b'"ok"', b"true", b"1.5", b'{"success":false}', b'{"error":{"code":"denied"}}'):
             with self.subTest(body=body):
                 with self.assertRaisesRegex(BackendContractError, "outcome is unconfirmed"):
                     await self.request(httpx.Response(200, content=body))
@@ -38,9 +38,13 @@ class ResponseContractTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_delete_204_is_valid_but_empty_create_is_not(self):
         result = await self.request(httpx.Response(204), "DELETE")
-        self.assertEqual({key: value for key, value in result.items() if key != "_rate_limit"}, {})
+        self.assertEqual({key: value for key, value in result.items() if not key.startswith("_")}, {})
         with self.assertRaises(BackendContractError):
             await self.request(httpx.Response(204))
+
+    async def test_backend_cannot_spoof_delete_no_content_marker(self):
+        result = await self.request(httpx.Response(200, json={"_http_no_content": True}), "DELETE")
+        self.assertNotIn("_http_no_content", result)
 
     async def test_auth_errors_remain_auth_errors_even_with_html(self):
         for status, error in ((401, Unauthorized), (403, PermissionDenied)):

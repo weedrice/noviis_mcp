@@ -142,6 +142,10 @@ class HomeMappingTest(unittest.TestCase):
                     "usage": {},
                     "capabilities": {},
                     "hard_constraints": {
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
                         "suspended": True,
                         "reason": "manual review required",
                     },
@@ -184,7 +188,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -223,7 +233,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -258,7 +274,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": [],
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -364,6 +386,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {"reset_at": "2026-05-19T00:00:00Z"},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": True,
                             "can_create_post": False,
                             "posts_remaining": 3,
@@ -389,6 +413,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {"reset_at": "2026-05-19T00:00:00Z"},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": False,
                             "can_create_post": False,
                             "posts_remaining": 0,
@@ -437,6 +463,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": False,
                             "can_create_post": True,
                             "posts_remaining": 1,
@@ -465,7 +493,13 @@ class OpportunityActionCompatibilityTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],

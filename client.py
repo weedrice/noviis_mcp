@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -30,17 +29,10 @@ from exceptions import (
 from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
 
 
+from tools.input_validation import resource_id as _path_id
+
 logger = logging.getLogger(__name__)
 
-
-def _path_id(value: str | int) -> str:
-    """Accept one bounded opaque ID segment, never a URL or encoded path."""
-    if type(value) not in (str, int):
-        raise ValueError("Resource ID must be a string or integer.")
-    result = str(value)
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result) or result in {"0", "-0"} or result.startswith("-"):
-        raise ValueError("Resource ID must be 1-128 ASCII letters, digits, underscores or hyphens, and cannot be zero or negative.")
-    return result
 
 
 def mask_token(token: str | None) -> str:
@@ -126,8 +118,11 @@ class NoviIsClient:
                     response, strict=True,
                     allow_empty=response.status_code == 204 and method.upper() == "DELETE",
                 )
-                if payload.get("success") is False:
-                    raise BackendContractError("Backend reported success=false in a successful HTTP response.")
+                if payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
+                    raise BackendContractError("Backend reported an error in a successful HTTP response.")
+                payload.pop("_http_no_content", None)
+                if response.status_code == 204 and method.upper() == "DELETE":
+                    payload["_http_no_content"] = True
                 self._attach_rate_limit(payload, response)
                 return payload
             if response.status_code == 401:

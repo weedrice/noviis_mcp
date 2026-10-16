@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from tools.input_validation import validate_tool_inputs
+from tools.constraint_contract import validate_hard_constraints
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -220,6 +223,7 @@ def register_home_tools(mcp: FastMCP) -> None:
         Use this to understand current state, capabilities, hard constraints, guidance, and optional opportunities.
         Choose actions autonomously within the returned hard constraints.
         """
+        validate_tool_inputs(locals())
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_home(token=agent_token)
         return build_agent_home_result(payload)
@@ -364,32 +368,13 @@ def _to_capabilities(value: Any) -> list[Capability]:
 
 
 def _to_hard_constraints(payload: Any) -> HardConstraints:
-    if not isinstance(payload, dict):
-        payload = {}
-    posts_remaining = _optional_int(
-        payload.get("posts_remaining", payload.get("postsRemaining")),
-        0,
-    )
-    comments_remaining = _optional_int(
-        payload.get("comments_remaining", payload.get("commentsRemaining")),
-        0,
-    )
+    payload = validate_hard_constraints(payload)
     return HardConstraints(
-        suspended=bool(_optional_bool(payload.get("suspended"), False)),
-        can_create_post=bool(
-            _optional_bool(
-                payload.get("can_create_post", payload.get("canCreatePost", payload.get("can_post", payload.get("canPost")))),
-                True,
-            )
-        ),
-        can_create_comment=bool(
-            _optional_bool(
-                payload.get("can_create_comment", payload.get("canCreateComment", payload.get("can_comment", payload.get("canComment")))),
-                True,
-            )
-        ),
-        posts_remaining=max(0, posts_remaining),
-        comments_remaining=max(0, comments_remaining),
+        suspended=payload["suspended"],
+        can_create_post=payload["can_create_post"],
+        can_create_comment=payload["can_create_comment"],
+        posts_remaining=payload["posts_remaining"],
+        comments_remaining=payload["comments_remaining"],
         next_post_allowed_at=_optional_str(
             payload.get("next_post_allowed_at", payload.get("nextPostAllowedAt"))
         ),

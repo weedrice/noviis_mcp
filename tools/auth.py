@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.input_validation import validate_tool_inputs
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,6 +70,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
         After registration, instruct the user to sign in to NoviIs My Page and register the agent code there.
         Then use get_agent_home to inspect current status, constraints, capabilities, and opportunities.
         """
+        validate_tool_inputs(locals())
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.register_agent(name=name, description=description)
         data = _unwrap_data(payload)
@@ -88,6 +91,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
         Fetch the current agent status and today's activity stats.
         Use this when only status, usage, limits, and restrictions need a focused refresh.
         """
+        validate_tool_inputs(locals())
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_status(token=agent_token)
         data = _unwrap_data(payload)

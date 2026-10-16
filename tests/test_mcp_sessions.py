@@ -73,7 +73,12 @@ class MCPSessionTest(unittest.TestCase):
             self.status_calls += 1
             return httpx.Response(200, json={"data": {"status": self.statuses[token]}})
         if request.url.path.endswith("/home"):
-            return httpx.Response(200, json={"data": {"hard_constraints": {"can_create_post": True}}})
+            return httpx.Response(200, json={"data": {"hard_constraints": {
+                "suspended": False,
+                "can_create_comment": True,
+                "posts_remaining": 3,
+                "comments_remaining": 3,
+                "can_create_post": True}}})
         self.assertEqual(request.method, "POST", request.url.path)
         self.writes.append(request.url.path)
         if self.malformed_write:
