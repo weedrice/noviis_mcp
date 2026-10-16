@@ -25,9 +25,9 @@ for deploying to a Linux WAS over SSH.
 
 Deployment flow:
 
-1. On pull requests and main pushes, CI installs hash-locked build tools and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
+1. On pull requests and main pushes, CI installs the hash-locked pip from `requirements-installer.lock`, then the locked build tools, and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
 2. The main-only deployment job downloads that verified artifact, checks its SHA-256 and copies it to the WAS over SSH. The server verifies the same archive checksum before executing its helpers.
-3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Shared `.env`, `.env.local`, and `logs` stay in the app root.
+3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Before resolving application dependencies, both CI and the server install the exact pip version and wheel hash in the bundled `requirements-installer.lock` and print its version. This avoids host-dependent `ensurepip` versions misresolving extras such as `pyjwt[crypto]` under `--require-hashes`. Bootstrap failure aborts before activation. Shared `.env`, `.env.local`, and `logs` stay in the app root.
 4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and a 30-second MCP initialization/tool-registration check must pass before shared production configuration/logs are attached. This check uses only synthetic settings and temporary logs, without backend requests or a listening port. Production import validation (also limited to 30 seconds) loads both dotenv files, requires the configured log directory to exist, and redirects validation logs to a temporary directory before importing the application. It never opens production log files as the deploy user. Validation finishes before an atomic `current` symlink switch and systemd restart. The full regression suite runs in CI, with a 180-second limit.
 5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
 
@@ -46,7 +46,7 @@ Required GitHub repository secrets:
 Server prerequisites:
 
 - Python 3.11 or newer with venv/pip support. Actions uses the repository variable `DEPLOY_PYTHON_BIN` (default `python3.11`), passed explicitly to the server as `PYTHON_BIN`. Set it to a command such as `python3.12` or an absolute interpreter path; allowed characters are letters, digits, `_`, `.`, `/`, and `-`. Manual deployments can set `PYTHON_BIN` directly. The selected interpreter's version is checked before extracting deployment helpers.
-- access to a Python package index or an internally configured mirror serving the hash-locked wheels; missing compatible wheels or failed runtime checks abort before activation
+- access to a Python package index or an internally configured mirror serving the hash-locked application dependencies and pip wheel in `requirements-installer.lock`; missing compatible wheels or failed runtime checks abort before activation. Only the new release virtualenv's pip is replaced; the server's system Python and pip are unchanged.
 - `systemd`
 - passwordless `sudo systemctl` for the deploy user, or direct `systemctl` access
 - an existing production `.env` file in the deploy path

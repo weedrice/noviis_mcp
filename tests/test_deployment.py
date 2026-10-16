@@ -16,14 +16,16 @@ from deploy.deploy_release import activate, deploy, extract_release, validate_pr
 from deploy.release_artifact import verification_environment
 
 
-def bundle(archive, files, *, tamper=False):
+def bundle(archive, files, *, tamper=False, include_installer=True):
     files = {**files, "requirements.lock": b"# locked test fixture",
              "wheelhouse/noviis_mcp-0.1.0-py3-none-any.whl": b"synthetic wheel"}
+    if include_installer:
+        files["requirements-installer.lock"] = b"# locked installer fixture"
     manifest = {"format": 2, "revision": "test", "minimum_python": [3, 11],
                 "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files["release-manifest.json"] = json.dumps(manifest).encode()
     if tamper:
-        files["main.py"] = b"changed after CI"
+        files[tamper if isinstance(tamper, str) else "main.py"] = b"changed after CI"
     with tarfile.open(archive, "w:gz") as package:
         for name, contents in files.items():
             info = tarfile.TarInfo(name)
@@ -69,11 +71,19 @@ class DeploymentTest(unittest.TestCase):
             events.append(("switch", target))
             self.assertTrue((target / "main.py").is_file())
         release = self.run_deploy(run=run, switch=switch, smoke=lambda _: events.append(("smoke", None)))
-        self.assertEqual([event[0] for event in events], ["run"] * 6 + ["switch", "run", "smoke", "run"])
-        install = events[1][1]
+        self.assertEqual([event[0] for event in events], ["run"] * 8 + ["switch", "run", "smoke", "run"])
+        bootstrap = events[1][1]
+        self.assertEqual(bootstrap[1:], [
+            "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "--no-deps",
+            "-r", str(release / "requirements-installer.lock"),
+        ])
+        self.assertEqual(events[2][1], [bootstrap[0], "-m", "pip", "--version"])
+        install = events[3][1]
         for flag in ("--require-hashes", "--only-binary=:all:"):
             self.assertIn(flag, install)
         self.assertNotIn("--no-index", install)
+        self.assertEqual(install[0], bootstrap[0])
+        self.assertEqual(install[-2:], ["-r", str(release / "requirements.lock")])
         self.assertTrue(release.is_relative_to(self.app / "releases"))
         self.assertIn('"current"', (self.app / "main.py").read_text(encoding="utf-8"))
 
@@ -85,6 +95,26 @@ class DeploymentTest(unittest.TestCase):
             self.run_deploy(run=Mock(side_effect=subprocess.CalledProcessError(1, "pip")), switch=switch)
         switch.assert_not_called()
         self.assertEqual(entry.read_bytes(), b"# old")
+
+    def test_installer_bootstrap_failure_prevents_dependency_install_and_service_changes(self):
+        entry = self.app / "main.py"
+        entry.write_bytes(b"# running release")
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+            if args[-1].endswith("requirements-installer.lock"):
+                raise subprocess.CalledProcessError(1, args)
+
+        switch, smoke = Mock(), Mock()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_deploy(run=run, switch=switch, smoke=smoke)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("venv", calls[0])
+        self.assertTrue(calls[1][-1].endswith("requirements-installer.lock"))
+        switch.assert_not_called()
+        smoke.assert_not_called()
+        self.assertEqual(entry.read_bytes(), b"# running release")
 
     def test_failed_smoke_restores_legacy_entrypoint_and_checks_rollback(self):
         entry = self.app / "main.py"
@@ -128,6 +158,17 @@ class DeploymentTest(unittest.TestCase):
                 self.run_deploy(run=run, switch=switch)
         run.assert_not_called()
         switch.assert_not_called()
+
+    def test_missing_or_modified_installer_lock_never_installs_or_activates(self):
+        files = {"main.py": b"", "pyproject.toml": b"", "tools/__init__.py": b""}
+        for kwargs in ({"include_installer": False}, {"tamper": "requirements-installer.lock"}):
+            with self.subTest(**kwargs):
+                bundle(self.archive, files, **kwargs)
+                run, switch = Mock(), Mock()
+                with self.assertRaises(ValueError):
+                    self.run_deploy(run=run, switch=switch)
+                run.assert_not_called()
+                switch.assert_not_called()
 
     def test_runtime_failure_preserves_current_service_and_shared_config(self):
         entry = self.app / "main.py"

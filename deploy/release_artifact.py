@@ -54,7 +54,7 @@ def verify_release(root: Path) -> dict:
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or digest(path) != expected:
             raise ValueError(f"Release checksum mismatch: {name}")
     wheels = list((root / "wheelhouse").glob("*.whl"))
-    if ("requirements.lock" not in manifest["files"] or len(wheels) != 1
+    if (not {"requirements.lock", "requirements-installer.lock"}.issubset(manifest["files"]) or len(wheels) != 1
             or not wheels[0].name.startswith("noviis_mcp-") or not wheels[0].name.endswith("-py3-none-any.whl")):
         raise ValueError("Release must contain locked dependencies and one portable application wheel")
     return manifest
@@ -63,6 +63,11 @@ def verify_release(root: Path) -> dict:
 def install_release(root: Path, *, run=subprocess.run, python=sys.executable) -> Path:
     interpreter = root / (".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python")
     run([python, "-m", "venv", str(root / ".venv")], check=True)
+    # ensurepip varies by host Python build. Older resolvers can select an
+    # unpinned extras candidate even when its base package is hash-locked.
+    run([str(interpreter), "-m", "pip", "install", "--require-hashes", "--only-binary=:all:",
+         "--no-deps", "-r", str(root / "requirements-installer.lock")], check=True, cwd=root)
+    run([str(interpreter), "-m", "pip", "--version"], check=True, cwd=root)
     # Resolve wheel compatibility on the target, while versions and hashes stay locked.
     run([str(interpreter), "-m", "pip", "install", "--require-hashes", "--only-binary=:all:",
          "-r", str(root / "requirements.lock")], check=True, cwd=root)
