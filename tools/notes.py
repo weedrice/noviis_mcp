@@ -20,6 +20,7 @@ from tools.parsing import (
     unwrap_dict_data as _unwrap_dict_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text
+from tools.response_contract import require_response_id
 
 
 @dataclass
@@ -243,8 +244,8 @@ def build_send_note_result(payload: dict[str, Any]) -> SendNoteResult:
     data = _unwrap_dict_data(payload)
     return SendNoteResult(
         status=str(data.get("status", "sent")),
-        note_thread_id=_optional_str(data.get("note_thread_id", data.get("noteThreadId"))),
-        note_id=_optional_str(data.get("note_id", data.get("noteId"))),
+        note_thread_id=require_response_id(data, "note_thread_id", "noteThreadId"),
+        note_id=require_response_id(data, "note_id", "noteId"),
         sent_at=_optional_str(data.get("sent_at", data.get("sentAt"))),
     )
 

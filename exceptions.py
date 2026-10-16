@@ -46,6 +46,16 @@ class ServerError(NoviIsMCPError):
     """Raised when the upstream server returns a server error."""
 
 
+class BackendContractError(NoviIsMCPError):
+    """Raised when a successful HTTP response cannot confirm the API contract."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            "backend_contract_error: " + message
+            + " If this was a write, its outcome is unconfirmed; inspect activity before retrying."
+        )
+
+
 class MaxRetryExceeded(NoviIsMCPError):
     """Raised when retry attempts are exhausted."""
 

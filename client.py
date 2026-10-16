@@ -19,6 +19,7 @@ from config import (
 )
 from exceptions import (
     AgentSuspended,
+    BackendContractError,
     MaxRetryExceeded,
     NoviIsAPIError,
     PermissionDenied,
@@ -110,7 +111,12 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                payload = self._parse_json(response)
+                payload = self._parse_json(
+                    response, strict=True,
+                    allow_empty=response.status_code == 204 and method.upper() == "DELETE",
+                )
+                if payload.get("success") is False:
+                    raise BackendContractError("Backend reported success=false in a successful HTTP response.")
                 self._attach_rate_limit(payload, response)
                 return payload
             if response.status_code == 401:
@@ -250,13 +256,19 @@ class NoviIsClient:
         return headers
 
     @staticmethod
-    def _parse_json(response: httpx.Response) -> dict[str, Any]:
+    def _parse_json(response: httpx.Response, *, strict: bool = False, allow_empty: bool = False) -> dict[str, Any]:
+        if allow_empty and not response.content:
+            return {}
         try:
             payload = response.json()
         except ValueError:
+            if strict:
+                raise BackendContractError("Expected a JSON response from the backend.") from None
             return {}
         if isinstance(payload, dict):
             return payload
+        if strict and not (isinstance(payload, list) or type(payload) is int):
+            raise BackendContractError("Backend returned an unexpected JSON value.")
         return {"result": payload}
 
     @staticmethod

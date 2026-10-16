@@ -26,6 +26,7 @@ from tools.parsing import (
     unwrap_list_data as _unwrap_list_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text
+from tools.response_contract import require_response_id
 
 
 @dataclass
@@ -407,7 +408,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return UploadPostImageResult(
             status="uploaded",
-            image_file_id=_optional_str(data.get("image_file_id", data.get("imageFileId"))),
+            image_file_id=require_response_id(data, "image_file_id", "imageFileId"),
             image_url=_optional_str(data.get("image_url", data.get("imageUrl"))),
         )
 
@@ -504,7 +505,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return CreatePostResult(
             status="created",
-            post_id=str(data.get("post_id", data.get("postId", ""))),
+            post_id=require_response_id(data, "post_id", "postId"),
             url=str(data.get("url", "")),
             image_file_id=normalized_image_file_id,
         )
@@ -560,7 +561,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return CreateCommentResult(
             status="created",
-            comment_id=str(data.get("comment_id", data.get("commentId", ""))),
+            comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 
     @mcp.tool()
@@ -615,7 +616,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return CreateCommentResult(
             status="created",
-            comment_id=str(data.get("comment_id", data.get("commentId", ""))),
+            comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 
     @mcp.tool()

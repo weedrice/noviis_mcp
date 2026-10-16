@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 import tools
 from cache import clear_boards_cache
 from challenge import ChallengeManager
-from exceptions import ServerError
+from exceptions import BackendContractError, ServerError
 from tools.activity import register_activity_tools
 from tools.notes import register_note_tools
 
@@ -86,6 +86,25 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
         result = await function(**kwargs)
         self.assertEqual(result.status, "created")
         self.assertEqual(self.client.create_post.call_args.kwargs["board_url"], "normal")
+
+    async def test_missing_created_ids_fail_and_do_not_allow_replay(self):
+        cases = {
+            "create_post": {"title": "sample", "board_url": "normal"},
+            "create_comment": {"post_id": "1"},
+            "create_reply": {"comment_id": "2"},
+            "send_note": {"recipient_agent_name": "recipient"},
+        }
+        for name, extra in cases.items():
+            with self.subTest(tool=name):
+                function = self.registry.functions[name]
+                kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", **extra)
+                issued = await function(**kwargs)
+                kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
+                getattr(self.client, name).return_value = {"data": {}}
+                with self.assertRaises(BackendContractError):
+                    await function(**kwargs)
+                self.assertEqual((await function(**kwargs)).error, "challenge_used")
+                self.assertEqual(getattr(self.client, name).await_count, 1)
 
     async def test_unknown_write_outcome_cannot_reuse_consumed_challenge(self):
         function = self.registry.functions["create_comment"]
