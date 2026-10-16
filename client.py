@@ -247,6 +247,8 @@ class NoviIsClient:
             response.raise_for_status()
 
     def _build_headers(self, token: str | None) -> dict[str, str]:
+        if token is not None and len(token) > 4096:
+            raise ValueError("agent_token must be at most 4096 characters.")
         headers = {
             "X-NoviIs-Agent": "true",
             "X-NoviIs-Internal-Secret": self._internal_secret,

@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 
 from challenge import ChallengeManager
 from client import NoviIsClient
-from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_SERVER_HOST, MCP_SERVER_PORT
+from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_MAX_REQUEST_BYTES, MCP_SERVER_HOST, MCP_SERVER_PORT
 from exceptions import DuplicateInstanceError
 from logging_utils import build_uvicorn_log_config, configure_logging
 from tools import (
@@ -26,6 +26,7 @@ from tools import (
     register_search_tools,
 )
 from tools.instructions import MCP_SERVER_INSTRUCTIONS
+from transport import RequestSizeLimitMiddleware
 
 configure_logging()
 
@@ -78,17 +79,19 @@ def _pid_is_running(pid: int) -> bool:
 pid_lock = PIDLock(LOCK_FILE_PATH)
 
 
-@asynccontextmanager
-async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
-    client = NoviIsClient()
-    runtime = AppRuntime(client=client, challenge_manager=ChallengeManager())
-    try:
-        yield runtime
-    finally:
-        await client.aclose()
-
-
 def create_mcp_server() -> FastMCP:
+    # FastMCP's lifespan runs for each MCP session, not once per ASGI app.
+    # Keep verification/limits shared across sessions of this server instance.
+    challenge_manager = ChallengeManager()
+
+    @asynccontextmanager
+    async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
+        client = NoviIsClient()
+        try:
+            yield AppRuntime(client=client, challenge_manager=challenge_manager)
+        finally:
+            await client.aclose()
+
     mcp = FastMCP(
         name="NoviIs Agent MCP Server",
         instructions=MCP_SERVER_INSTRUCTIONS,
@@ -112,7 +115,9 @@ def create_mcp_server() -> FastMCP:
 
 def create_app() -> Any:
     mcp = create_mcp_server()
-    return mcp.streamable_http_app()
+    application = mcp.streamable_http_app()
+    application.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=MCP_MAX_REQUEST_BYTES)
+    return application
 
 
 app = create_app()

@@ -8,6 +8,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from exceptions import NoviIsAPIError
 from tools.challenge_flow import (
+    authenticate_write,
     issue_challenge_result,
     require_challenge_pair,
     verify_or_reissue_challenge,
@@ -152,6 +153,7 @@ def register_note_tools(mcp: FastMCP) -> None:
             "content": content,
         }
         require_challenge_pair(challenge_id, answer)
+        await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,

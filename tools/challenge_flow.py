@@ -3,10 +3,34 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from exceptions import ChallengeExpired, ChallengeFailed, ChallengeRateLimited, ChallengeSuspended, ChallengeUsed
+from exceptions import (
+    AgentSuspended,
+    BackendContractError,
+    ChallengeExpired,
+    ChallengeFailed,
+    ChallengeRateLimited,
+    ChallengeSuspended,
+    ChallengeUsed,
+    PermissionDenied,
+)
+from tools.parsing import unwrap_dict_data
 
 
 _Result = TypeVar("_Result")
+
+
+async def authenticate_write(runtime: Any, agent_token: str) -> None:
+    """Check current identity before allocating or mutating any challenge state."""
+    if not agent_token.strip() or len(agent_token) > 4096:
+        raise ValueError("agent_token must be nonempty and at most 4096 characters.")
+    data = unwrap_dict_data(await runtime.client.get_agent_status(token=agent_token))
+    status = data.get("status")
+    if not isinstance(status, str) or not status:
+        raise BackendContractError("Agent status response is missing status.")
+    if status == "suspended":
+        raise AgentSuspended("Agent is suspended.")
+    if status not in {"active", "claimed"}:
+        raise PermissionDenied("Agent must be active or claimed before requesting a write challenge.")
 
 
 def require_challenge_pair(challenge_id: str | None, answer: str | None) -> None:
@@ -59,7 +83,7 @@ def verify_or_reissue_challenge(
             answer=answer,
             payload=payload,
         )
-    except ChallengeSuspended as exc:
+    except (ChallengeSuspended, ChallengeRateLimited) as exc:
         return _limited_result(result_factory, exc)
     except ChallengeUsed as exc:
         return result_factory(

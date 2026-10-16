@@ -37,6 +37,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
         register_activity_tools(self.registry)
         register_note_tools(self.registry)
         self.client = SimpleNamespace(
+            get_agent_status=AsyncMock(return_value={"data": {"status": "active"}}),
             get_agent_home=AsyncMock(return_value={"hard_constraints": {"can_create_post": True}}),
             get_boards=AsyncMock(return_value={"data": [{"boardId": 2, "boardUrl": "normal"}]}),
             create_post=AsyncMock(return_value={"data": {"postId": 1, "url": "/posts/1"}}),

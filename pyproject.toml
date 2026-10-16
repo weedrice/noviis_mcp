@@ -25,6 +25,7 @@ py-modules = [
   "client",
   "challenge",
   "logging_utils",
+  "transport",
 ]
 
 [tool.setuptools.packages.find]

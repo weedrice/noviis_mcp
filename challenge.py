@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import random
 import re
 import time
 import uuid
 from collections.abc import Callable
-from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
@@ -18,6 +19,9 @@ from config import (
     CHALLENGE_ISSUE_LIMIT,
     CHALLENGE_ISSUE_WINDOW_SECONDS,
     CHALLENGE_MAX_PENDING,
+    CHALLENGE_MAX_TOTAL_PENDING,
+    CHALLENGE_MAX_RECORDS,
+    CHALLENGE_MAX_PAYLOAD_BYTES,
     CHALLENGE_RETENTION_SECONDS,
     CHALLENGE_SUSPEND_SECONDS,
 )
@@ -48,7 +52,7 @@ class ChallengePrompt:
 class ChallengeRecord:
     owner_key: str
     action: str
-    payload: dict[str, Any]
+    payload_digest: str
     answer: str
     expires_at: float
     status: Literal["pending", "used", "expired", "failed"] = "pending"
@@ -77,10 +81,17 @@ class ChallengeManager:
         action: str,
         payload: dict[str, Any],
     ) -> ChallengePrompt:
+        owner_key = _owner_digest(owner_key)
+        payload_digest = _payload_digest(payload)
         now = self._clock()
         self._cleanup(now)
-        state = self._owners.setdefault(owner_key, OwnerState())
+        state = self._owner_state(owner_key)
         self._check_suspension(state, now)
+        if len(self._challenges) >= CHALLENGE_MAX_RECORDS:
+            self._capacity_error("challenge_storage_limit", now)
+        total_pending = sum(record.status == "pending" for record in self._challenges.values())
+        if total_pending >= CHALLENGE_MAX_TOTAL_PENDING:
+            self._capacity_error("challenge_global_pending_limit", now)
         if len(state.issued_at) >= CHALLENGE_ISSUE_LIMIT:
             raise ChallengeRateLimited(
                 code="challenge_issue_limit",
@@ -103,7 +114,7 @@ class ChallengeManager:
         self._challenges[challenge_id] = ChallengeRecord(
             owner_key=owner_key,
             action=action,
-            payload=deepcopy(payload),
+            payload_digest=payload_digest,
             answer=_calculate_answer(left, right, operation),
             expires_at=now + CHALLENGE_EXPIRES_SECONDS,
         )
@@ -123,9 +134,11 @@ class ChallengeManager:
         answer: str,
         payload: dict[str, Any],
     ) -> None:
+        owner_key = _owner_digest(owner_key)
+        payload_digest = _payload_digest(payload)
         now = self._clock()
         self._cleanup(now)
-        state = self._owners.setdefault(owner_key, OwnerState())
+        state = self._owner_state(owner_key)
         self._check_suspension(state, now)
         record = self._challenges.get(challenge_id)
         if record is None:
@@ -135,7 +148,7 @@ class ChallengeManager:
         if record.owner_key != owner_key:
             self._mark_failure(state, now)
             raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
-        if record.action != action or record.payload != payload:
+        if record.action != action or record.payload_digest != payload_digest:
             if record.status == "pending":
                 self._finish(record, "failed", now)
             self._mark_failure(state, now)
@@ -161,6 +174,29 @@ class ChallengeManager:
         self._finish(record, "used", now)
         # Successful answers do not erase other failures in the rolling window.
 
+    def _owner_state(self, owner_key: str) -> OwnerState:
+        if owner_key not in self._owners:
+            if len(self._owners) >= CHALLENGE_MAX_RECORDS:
+                raise ChallengeRateLimited(
+                    code="challenge_storage_limit", retry_after=CHALLENGE_FAILURE_WINDOW_SECONDS,
+                    message="Challenge state capacity reached. Wait before retrying.",
+                )
+            self._owners[owner_key] = OwnerState()
+        return self._owners[owner_key]
+
+    def _capacity_error(self, code: str, now: float) -> None:
+        if code == "challenge_global_pending_limit":
+            deadline = min(record.expires_at for record in self._challenges.values() if record.status == "pending")
+        else:
+            deadline = min(
+                (record.finished_at if record.finished_at is not None else record.expires_at)
+                + CHALLENGE_RETENTION_SECONDS for record in self._challenges.values()
+            )
+        raise ChallengeRateLimited(
+            code=code, retry_after=_seconds_until(deadline, now),
+            message="Server challenge capacity reached. Complete pending work or wait before retrying.",
+        )
+
     @staticmethod
     def _finish(record: ChallengeRecord, status: Literal["used", "expired", "failed"], now: float) -> None:
         record.status = status
@@ -185,17 +221,31 @@ class ChallengeManager:
                 self._finish(record, "expired", record.expires_at)
             if record.finished_at is not None and now >= record.finished_at + CHALLENGE_RETENTION_SECONDS:
                 del self._challenges[challenge_id]
+        pending_owners = {record.owner_key for record in self._challenges.values() if record.status == "pending"}
         for owner_key, state in list(self._owners.items()):
             state.failures = [stamp for stamp in state.failures if stamp > now - CHALLENGE_FAILURE_WINDOW_SECONDS]
             state.issued_at = [stamp for stamp in state.issued_at if stamp > now - CHALLENGE_ISSUE_WINDOW_SECONDS]
             if state.suspended_until is not None and state.suspended_until <= now:
                 state.suspended_until = None
-            if not state.failures and not state.issued_at and state.suspended_until is None:
+            if not state.failures and not state.issued_at and state.suspended_until is None and owner_key not in pending_owners:
                 del self._owners[owner_key]
 
 
 def _seconds_until(deadline: float, now: float) -> int:
     return max(1, math.ceil(deadline - now))
+
+
+def _owner_digest(owner_key: str) -> str:
+    if not owner_key.strip() or len(owner_key) > 4096:
+        raise ValueError("agent_token must be nonempty and at most 4096 characters.")
+    return hashlib.sha256(owner_key.encode("utf-8")).hexdigest()
+
+
+def _payload_digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    if len(encoded) > CHALLENGE_MAX_PAYLOAD_BYTES:
+        raise ValueError(f"Challenge payload must be at most {CHALLENGE_MAX_PAYLOAD_BYTES} UTF-8 bytes.")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _random_expression() -> tuple[int, int, str]:

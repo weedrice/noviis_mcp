@@ -157,7 +157,8 @@ class ChallengeTest(unittest.TestCase):
         self.issue("new-owner")
         self.assertNotIn(used.challenge_id, self.manager._challenges)
         self.assertNotIn(expired.challenge_id, self.manager._challenges)
-        self.assertEqual(set(self.manager._owners), {"new-owner"})
+        self.assertEqual(len(self.manager._owners), 1)
+        self.assertNotIn("new-owner", self.manager._owners)
 
     def test_payload_is_copied_at_issuance(self):
         self.payload["nested"] = {"value": "original"}

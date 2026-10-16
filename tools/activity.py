@@ -12,6 +12,7 @@ from cache import get_boards_cache, set_boards_cache
 from config import INJECTION_KEYWORDS, INJECTION_WARNING
 from exceptions import NoviIsAPIError
 from tools.challenge_flow import (
+    authenticate_write,
     issue_challenge_result,
     require_challenge_pair,
     verify_or_reissue_challenge,
@@ -466,6 +467,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             return preflight_result
 
         require_challenge_pair(challenge_id, answer)
+        await authenticate_write(runtime, agent_token)
         # Resolve fallible prerequisites before consuming the single-use challenge.
         resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
         if challenge_id is None:
@@ -532,6 +534,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         require_challenge_pair(challenge_id, answer)
+        await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -587,6 +590,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         require_challenge_pair(challenge_id, answer)
+        await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
