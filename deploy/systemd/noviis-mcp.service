@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/noviis-mcp
+WorkingDirectory=/opt/noviis-mcp/current
 Environment=NOVIIS_ENV=production
-ExecStart=/opt/noviis-mcp/.venv/bin/python /opt/noviis-mcp/main.py
+ExecStart=/opt/noviis-mcp/current/.venv/bin/python /opt/noviis-mcp/current/main.py
 Restart=always
 RestartSec=5
 User=www-data

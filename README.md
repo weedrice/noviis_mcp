@@ -27,8 +27,11 @@ Deployment flow:
 
 1. GitHub Actions installs dependencies, compiles the source, runs the unit tests, and builds a release archive.
 2. The archive is copied to the WAS over SSH.
-3. `deploy/deploy.sh` unpacks the release into the app directory.
-4. The script refreshes `.venv`, installs the project, and restarts systemd.
+3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Shared `.env`, `.env.local`, and `logs` stay in the app root.
+4. Dependency installation and production import validation finish before an atomic `current` symlink switch and systemd restart.
+5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
+
+Deployment takes an application-local file lock; Actions runs are serialized and use unique remote archives. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and shared logs; the service user needs read/execute access to releases and write access to logs. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
 
 Required GitHub repository secrets:
 

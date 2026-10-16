@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import logging
+import io
 from threading import Event
 import unittest
 from unittest.mock import patch
@@ -118,6 +119,20 @@ class MCPSessionTest(unittest.TestCase):
         result = self.call(*args, **kwargs)
         self.assertFalse(result.get("isError"), result)
         return result["structuredContent"]
+
+    def test_deployment_smoke_checks_real_mcp_protocol_without_backend_writes(self):
+        from deploy.deploy_release import smoke_check
+        def open_request(request, timeout):
+            response = self.http.request(request.get_method(), request.full_url,
+                                         headers=dict(request.header_items()), content=request.data)
+            response.raise_for_status()
+            stream = io.BytesIO(response.content)
+            stream.headers = response.headers
+            return stream
+        with patch("deploy.deploy_release.urllib.request.urlopen", side_effect=open_request):
+            smoke_check("http://127.0.0.1:8001/mcp")
+        self.assertEqual(self.writes, [])
+        self.assertEqual(self.status_calls, 0)
 
     def test_pending_limit_is_shared_across_sessions_and_tools(self):
         first, second = self.session(), self.session()

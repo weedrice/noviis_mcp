@@ -6,10 +6,15 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      ARCHIVE_PATH: /tmp/noviis-mcp-${{ github.run_id }}-${{ github.run_attempt }}.tgz
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/noviis-mcp' }}
       SERVICE_NAME: ${{ secrets.DEPLOY_SERVICE_NAME || 'noviis-mcp.service' }}
@@ -59,14 +64,15 @@ jobs:
             --exclude=dist \
             --exclude=__pycache__ \
             --exclude=.pytest_cache \
+            --exclude=logs \
             -czf dist/release.tgz .
 
       - name: Upload release archive
         run: |
-          scp -P "$DEPLOY_PORT" dist/release.tgz "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/noviis-mcp-release.tgz"
+          scp -P "$DEPLOY_PORT" dist/release.tgz "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:$ARCHIVE_PATH"
 
       - name: Run remote deploy
         run: |
           ssh -p "$DEPLOY_PORT" "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            "APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' ARCHIVE_PATH='/tmp/noviis-mcp-release.tgz' bash -s" \
+            "APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' ARCHIVE_PATH='$ARCHIVE_PATH' bash -s" \
             < deploy/deploy.sh
