@@ -25,10 +25,10 @@ for deploying to a Linux WAS over SSH.
 
 Deployment flow:
 
-1. On pull requests and main pushes, CI installs hash-locked build tools, downloads the locked runtime wheels, and builds the application wheel. It creates an archive, installs that exact bundle offline into a fresh virtualenv, and runs all tests there before publishing the archive.
+1. On pull requests and main pushes, CI installs hash-locked build tools and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
 2. The main-only deployment job downloads that verified artifact, checks its SHA-256 and copies it to the WAS over SSH. The server verifies the same archive checksum before executing its helpers.
 3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Shared `.env`, `.env.local`, and `logs` stay in the app root.
-4. The file manifest, Python minor version and OS/architecture are checked. Dependencies are installed with `--no-index --require-hashes` from the bundled wheelhouse, followed by `pip check`. Production import validation finishes before an atomic `current` symlink switch and systemd restart.
+4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and the full test suite must pass before shared production configuration/logs are attached. Production import validation then finishes before an atomic `current` symlink switch and systemd restart.
 5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
 
 Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and shared logs; the service user needs read/execute access to releases and write access to logs. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
@@ -45,7 +45,8 @@ Required GitHub repository secrets:
 
 Server prerequisites:
 
-- Python 3.11 (`python3.11`, or set `PYTHON_BIN`); Linux architecture matching the CI wheel bundle
+- Python 3.11 or newer (`python3`, or set `PYTHON_BIN`) with venv/pip support
+- access to a Python package index or an internally configured mirror serving the hash-locked wheels; missing compatible wheels or failed target tests abort before activation
 - `systemd`
 - passwordless `sudo systemctl` for the deploy user, or direct `systemctl` access
 - an existing production `.env` file in the deploy path
@@ -457,11 +458,13 @@ python -m unittest discover -s tests -p test_backend_contract.py -v
 CI uses the committed snapshot and does not silently fetch a changing backend
 branch. Update both repositories together when their wire contract changes.
 
-## Reproducible Linux Releases
+## Portable Linux Releases With Locked Dependencies
 
-`requirements.lock` locks runtime dependencies and hashes for Python 3.11/Linux;
-`requirements-build.lock` locks the build toolchain. Windows development can still
-use the project's normal installation; the deployment lock targets Linux wheels.
+`requirements.lock` locks runtime dependency versions and permitted distribution
+hashes; `requirements-build.lock` locks the build toolchain. The lock is generated
+on Python 3.11/Linux. Other Python versions and architectures must have compatible
+wheels for these exact versions and pass the full target-side tests before activation.
+Windows development can still use the project's normal installation.
 To deliberately refresh pins, use pip-tools 7.6.2 on Python 3.11/Linux:
 
 ```bash
@@ -473,9 +476,11 @@ python scripts/build_release.py --revision "$(git rev-parse HEAD)" --output dist
 
 pip-compile preserves existing pins; use `--upgrade` deliberately when updating
 runtime dependencies, then review the lock diff and test the bundle. Choose a
-fresh output path for each local build. The server needs no package-index access.
+fresh output path for each local build. The archive contains only the portable
+application wheel; native dependency wheels are selected on the server using the
+same lock and verified hashes. Deployment requires package-index/mirror access.
 For a manual deployment, pass `ARCHIVE_SHA256` from the verified `.sha256` file to
-`deploy/deploy.sh` along with `APP_DIR` and `ARCHIVE_PATH`. Keep source, wheelhouse,
-install lock, and release manifest together; modified or incompatible bundles
-are rejected before activation. Python/OS/architecture changes require rebuilding
-and verifying a matching artifact.
+`deploy/deploy.sh` along with `APP_DIR` and `ARCHIVE_PATH`. Keep source, tests,
+application wheel, dependency lock, and release manifest together. Modified
+archives, incompatible dependencies, and failing target tests are rejected before
+activation. The running service remains untouched during installation and tests.

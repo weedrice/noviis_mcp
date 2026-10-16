@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urllib.request
 import uuid
@@ -110,6 +111,15 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
         if not (release / required).is_file():
             raise ValueError("Release is missing required application files")
     for name in (".env", ".env.local", "logs"):
+        if (release / name).exists():
+            raise ValueError("Release archive must exclude config and logs")
+    interpreter = install_release(release, run=run, python=python)
+    # Validate the server's native wheels before attaching production config/logs.
+    with tempfile.TemporaryDirectory(prefix="noviis-release-tests-") as test_dir:
+        run([str(interpreter), "-m", "unittest", "discover", "-s", "tests", "-v"], check=True, cwd=release,
+            env={**os.environ, "NOVIIS_ENV": "development", "LOG_DIR": str(Path(test_dir) / "logs"),
+                 "LOCK_FILE_PATH": str(Path(test_dir) / "mcp.lock")})
+    for name in (".env", ".env.local", "logs"):
         shared = app / name
         if name == "logs":
             shared.mkdir(exist_ok=True)
@@ -118,7 +128,6 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
             raise ValueError("Release archive must exclude config and logs")
         if shared.exists():
             destination.symlink_to(shared, target_is_directory=shared.is_dir())
-    interpreter = install_release(release, run=run, python=python)
     run([str(interpreter), "-c", "import main; main.create_app()"], check=True, cwd=release,
         env={**os.environ, "NOVIIS_ENV": "production"})
     command = (["sudo"] if shutil.which("sudo") else []) + ["systemctl"]

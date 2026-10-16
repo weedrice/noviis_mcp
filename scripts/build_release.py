@@ -1,4 +1,4 @@
-"""Build, offline-install and test a release before producing its archive (Linux/Python 3.11)."""
+"""Build and test a portable application bundle with hash-locked dependencies."""
 from __future__ import annotations
 
 import argparse
@@ -17,8 +17,8 @@ from deploy.release_artifact import digest, install_release, verify_release, wri
 
 
 def build(output: Path, revision: str) -> None:
-    if sys.version_info[:2] != (3, 11) or platform.system() != "Linux":
-        raise ValueError("Build release artifacts on Linux with Python 3.11")
+    if sys.version_info[:2] < (3, 11) or platform.system() != "Linux":
+        raise ValueError("Build release artifacts on Linux with Python 3.11 or newer")
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         raise ValueError("Output already exists; choose a fresh archive path")
@@ -35,16 +35,10 @@ def build(output: Path, revision: str) -> None:
             shutil.copy2(ROOT / name, root)
         wheels = root / "wheelhouse"
         wheels.mkdir()
-        subprocess.run([sys.executable, "-m", "pip", "download", "--require-hashes", "--only-binary=:all:",
-                        "-r", str(ROOT / "requirements.lock"), "--dest", str(wheels)], check=True)
         build_source = Path(temporary) / "build-source"
         shutil.copytree(root, build_source, ignore=shutil.ignore_patterns("wheelhouse"))
         subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation",
                         "--wheel-dir", str(wheels), str(build_source)], check=True)
-        app_wheel, = wheels.glob("noviis_mcp-*.whl")
-        install_lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
-        install_lock += f'\nnoviis-mcp=={project["project"]["version"]} --hash=sha256:{digest(app_wheel)}\n'
-        (root / "requirements.install.lock").write_text(install_lock, encoding="utf-8")
         write_manifest(root, revision)
         verify_release(root)
         # Archive before verification generates a virtualenv, logs or bytecode.

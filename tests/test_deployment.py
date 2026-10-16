@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import hashlib
 import json
-import platform
 import sys
 import os
 from pathlib import Path
@@ -17,10 +16,9 @@ from deploy.deploy_release import activate, deploy, extract_release
 
 
 def bundle(archive, files, *, tamper=False):
-    files = {**files, "requirements.install.lock": b"# locked test fixture",
+    files = {**files, "requirements.lock": b"# locked test fixture",
              "wheelhouse/noviis_mcp-0.1.0-py3-none-any.whl": b"synthetic wheel"}
-    manifest = {"format": 1, "revision": "test", "python": "3.11", "system": platform.system(),
-                "machine": platform.machine(),
+    manifest = {"format": 2, "revision": "test", "minimum_python": [3, 11],
                 "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files["release-manifest.json"] = json.dumps(manifest).encode()
     if tamper:
@@ -61,14 +59,19 @@ class DeploymentTest(unittest.TestCase):
             events.append(("run", args))
             if "-c" in args:
                 self.assertEqual(kwargs["env"]["NOVIIS_ENV"], "production")
+            if "unittest" in args:
+                self.assertEqual(kwargs["env"]["NOVIIS_ENV"], "development")
+                self.assertFalse((kwargs["cwd"] / ".env").exists())
+                self.assertFalse((kwargs["cwd"] / "logs").exists())
         def switch(current, target):
             events.append(("switch", target))
             self.assertTrue((target / "main.py").is_file())
         release = self.run_deploy(run=run, switch=switch, smoke=lambda _: events.append(("smoke", None)))
-        self.assertEqual([event[0] for event in events], ["run", "run", "run", "run", "switch", "run", "smoke", "run"])
+        self.assertEqual([event[0] for event in events], ["run"] * 6 + ["switch", "run", "smoke", "run"])
         install = events[1][1]
-        for flag in ("--no-index", "--require-hashes", "--only-binary=:all:"):
+        for flag in ("--require-hashes", "--only-binary=:all:"):
             self.assertIn(flag, install)
+        self.assertNotIn("--no-index", install)
         self.assertTrue(release.is_relative_to(self.app / "releases"))
         self.assertIn('"current"', (self.app / "main.py").read_text(encoding="utf-8"))
 
@@ -111,18 +114,40 @@ class DeploymentTest(unittest.TestCase):
                 run.assert_not_called()
         self.assertFalse((self.root / "outside.py").exists())
 
-    def test_modified_artifact_and_wrong_platform_never_install_or_activate(self):
+    def test_modified_artifact_and_unsupported_python_never_install_or_activate(self):
         files = {"main.py": b"", "pyproject.toml": b"", "tools/__init__.py": b""}
         run, switch = Mock(), Mock()
         bundle(self.archive, files, tamper=True)
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             self.run_deploy(run=run, switch=switch)
         bundle(self.archive, files)
-        with patch("deploy.release_artifact.platform.machine", return_value="wrong-platform"):
-            with self.assertRaisesRegex(ValueError, "platform"):
+        with patch("deploy.release_artifact.sys.version_info", (3, 10)):
+            with self.assertRaisesRegex(ValueError, "Python 3.11"):
                 self.run_deploy(run=run, switch=switch)
         run.assert_not_called()
         switch.assert_not_called()
+
+    def test_native_dependency_test_failure_preserves_current_service_and_shared_config(self):
+        entry = self.app / "main.py"
+        entry.write_bytes(b"# running release")
+        (self.app / ".env").write_bytes(b"# production settings")
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            if "unittest" in args:
+                self.assertFalse((kwargs["cwd"] / ".env").exists())
+                raise subprocess.CalledProcessError(1, args)
+        switch = Mock()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_deploy(run=run, switch=switch)
+        switch.assert_not_called()
+        self.assertFalse(any("systemctl" in args for args in calls))
+        self.assertEqual(entry.read_bytes(), b"# running release")
+        self.assertEqual((self.app / ".env").read_bytes(), b"# production settings")
+
+    def test_portable_release_accepts_newer_python_before_target_install_checks_compatibility(self):
+        with patch("deploy.release_artifact.sys.version_info", (3, 12)):
+            self.run_deploy(run=Mock(), switch=Mock(), smoke=Mock())
 
     def test_archive_symlink_is_rejected(self):
         with tarfile.open(self.archive, "w:gz") as package:
