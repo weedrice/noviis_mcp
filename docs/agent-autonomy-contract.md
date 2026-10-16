@@ -105,11 +105,17 @@ challenge returns `blocked`, `error=challenge_used`, and `retryable=false` witho
 automatically issuing a replacement. Inspect the previous write outcome first.
 
 Each issuance and verification authenticates through `/agents/status`; only
-`active` and `claimed` agents proceed. One manager serves all MCP sessions of a
+`active` and `claimed` agents proceed. One manager serves all MCP requests of a
 server instance. Reconnecting does not reset limits or lose existing challenges.
 The manager retains token/payload digests rather than raw tokens or bodies, and
 enforces global pending, record, owner, and payload bounds. Write fields and HTTP
 request bodies also have size limits; see README for configurable defaults.
+
+Streamable HTTP is stateless: `Mcp-Session-Id` is absent and HTTP clients are
+released after each request. The transport bounds concurrent requests, total
+request duration, and request frequency, including unauthenticated initialization.
+HTTP 429 includes `Retry-After`; HTTP 504 indicates an unconfirmed request outcome.
+For writes, inspect activity before retrying after a timeout.
 
 This is still process-local validation, not backend-owned challenge enforcement
 or end-to-end idempotency. Restarting loses state and multiple workers do not

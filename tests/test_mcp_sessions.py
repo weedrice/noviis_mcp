@@ -88,7 +88,8 @@ class MCPSessionTest(unittest.TestCase):
                        "clientInfo": {"name": "regression-test", "version": "1"}},
         })
         self.assertEqual(response.status_code, 200, response.text)
-        headers.update({"mcp-session-id": response.headers["mcp-session-id"], "mcp-protocol-version": "2025-03-26"})
+        self.assertNotIn("mcp-session-id", response.headers)
+        headers["mcp-protocol-version"] = "2025-03-26"
         initialized = self.http.post("/mcp", headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
         self.assertEqual(initialized.status_code, 202)
         return headers
@@ -127,7 +128,7 @@ class MCPSessionTest(unittest.TestCase):
         first = self.session()
         issued = self.structured(first)
         deleted = self.http.delete("/mcp", headers=first)
-        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.status_code, 405)  # Stateless HTTP retains no session to delete.
         second = self.session()
         answer = {"challenge_id": issued["challenge"]["challenge_id"], "answer": "2.00"}
         self.assertEqual(self.structured(second, **answer)["status"], "created")
@@ -204,12 +205,93 @@ class MCPSessionTest(unittest.TestCase):
         session = self.session()
         self.structured(session)
         self.http.delete("/mcp", headers=session)
-        # DELETE acknowledges termination before the session task finishes cleanup.
-        self.assertTrue(self.client_closed[0].wait(timeout=5))
-        self.assertTrue(self.clients[0].is_closed)
+        for closed, client in zip(self.client_closed, self.clients):
+            self.assertTrue(closed.wait(timeout=5))
+            self.assertTrue(client.is_closed)
         main.create_mcp_server()
         self.assertEqual(len(self.managers), 2)
         self.assertEqual(self.managers[1]._challenges, {})
+
+    def test_initialization_leaves_no_live_clients_or_session_ids(self):
+        for _ in range(20):
+            self.session()
+        self.assertEqual(self.status_calls, 0)
+        for closed, client in zip(self.client_closed, self.clients):
+            self.assertTrue(closed.wait(timeout=5))
+            self.assertTrue(client.is_closed)
+
+    def test_global_request_rate_limit_rejects_before_client_creation(self):
+        with patch.object(main, "MCP_REQUEST_LIMIT", 2):
+            with TestClient(main.create_app(), base_url="http://127.0.0.1:8001") as http:
+                for _ in range(2):
+                    http.post("/mcp", headers={"Accept": "application/json, text/event-stream"}, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+                before = len(self.clients)
+                response = http.post("/mcp", json={})
+                self.assertEqual(response.status_code, 429)
+                self.assertIn("retry-after", response.headers)
+                self.assertEqual(len(self.clients), before)
+
+    def test_timeout_closes_backend_client_and_consumed_challenge_cannot_replay(self):
+        import anyio
+        session = self.session()
+        issued = self.structured(session)
+        answer = {"challenge_id": issued["challenge"]["challenge_id"], "answer": "2.00"}
+        original = self.backend
+
+        async def slow_backend(request):
+            if request.url.path.endswith("/comments"):
+                await anyio.sleep_forever()
+            return original(request)
+
+        # Change the existing outer middleware deadline, keeping the same manager.
+        self.http.app.middleware_stack.app.timeout_seconds = 0.05
+        self.backend = slow_backend
+        response = self.http.post("/mcp", headers=session, json={
+            "jsonrpc": "2.0", "id": 999, "method": "tools/call",
+            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample", **answer}},
+        })
+        self.assertEqual(response.status_code, 504)
+        self.assertTrue(self.client_closed[-1].wait(timeout=5))
+        self.assertTrue(self.clients[-1].is_closed)
+        self.backend = original
+        self.assertEqual(self.structured(session, **answer)["error"], "challenge_used")
+
+
+class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
+    async def test_official_client_initializes_and_completes_stateless_challenge(self):
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        writes = []
+        def backend(request):
+            if request.url.path.endswith("/status"):
+                return httpx.Response(200, json={"data": {"status": "active"}})
+            writes.append(request.url.path)
+            return httpx.Response(201, json={"data": {"commentId": 123}})
+
+        def client():
+            instance = NoviIsClient(client=httpx.AsyncClient(base_url="https://mock.invalid/api/v1", transport=httpx.MockTransport(backend)), internal_secret="test-secret")
+            instance._owns_client = True
+            return instance
+
+        with patch.object(main, "NoviIsClient", client), patch.object(main, "MCP_SERVER_HOST", "127.0.0.1"), patch("challenge._random_expression", return_value=(1, 1, "add")):
+            app = main.create_app()
+            async with app.router.lifespan_context(app):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
+                    async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write, session_id):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            self.assertIsNone(session_id())
+                            args = {"agent_token": "test-token", "post_id": "1", "content": "sample"}
+                            issued = await session.call_tool("create_comment", args)
+                            self.assertFalse(issued.isError)
+                            args.update(challenge_id=issued.structuredContent["challenge"]["challenge_id"], answer="2.00")
+                            created = await session.call_tool("create_comment", args)
+                            self.assertFalse(created.isError)
+                            self.assertEqual(created.structuredContent["comment_id"], "123")
+                            replay = await session.call_tool("create_comment", args)
+                            self.assertEqual(replay.structuredContent["error"], "challenge_used")
+        self.assertEqual(len(writes), 1)
 
 
 if __name__ == "__main__":
