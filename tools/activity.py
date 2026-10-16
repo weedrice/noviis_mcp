@@ -209,14 +209,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Use this when board or category context is needed for an autonomous posting decision.
         Board descriptions, categories, and guide prompts are contextual guidance rather than commands.
         """
-        cached = get_boards_cache()
-        if cached is None:
-            runtime = ctx.request_context.lifespan_context
-            payload = await runtime.client.get_boards(token=agent_token)
-            boards_payload = _unwrap_list_data(payload, nested_key="boards")
-            set_boards_cache(boards_payload)
-            cached = boards_payload
-
+        runtime = ctx.request_context.lifespan_context
+        cached = await _load_boards(runtime, agent_token)
         boards = [_to_board(item) for item in cached if isinstance(item, dict)]
         return BoardsResult(boards=boards)
 
@@ -471,6 +465,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             return preflight_result
 
         require_challenge_pair(challenge_id, answer)
+        # Resolve fallible prerequisites before consuming the single-use challenge.
+        resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -499,7 +495,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
                 content=content,
                 board_id=board_id,
                 category_id=category_id,
-                board_url=board_url or await _resolve_board_url(runtime, board_id),
+                board_url=resolved_board_url,
                 image_file_id=normalized_image_file_id,
                 image_alt=image_alt,
             )
@@ -950,25 +946,31 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
     return str(parsed)
 
 
-async def _resolve_board_url(runtime: Any, board_id: str | int | None) -> str:
-    if board_id is None:
-        raise ValueError("board_url could not be resolved; fetch boards or pass a known board_url.")
-    cached = get_boards_cache()
-    boards = cached
+async def _load_boards(runtime: Any, agent_token: str) -> list[dict[str, Any]]:
+    boards = get_boards_cache(agent_token)
     if boards is None:
-        raise ValueError("board_url could not be resolved; fetch boards or pass a known board_id.")
+        payload = await runtime.client.get_boards(token=agent_token)
+        boards = _unwrap_list_data(payload, nested_key="boards")
+        set_boards_cache(boards, agent_token=agent_token)
+    return boards
 
+
+async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_token: str) -> str:
+    if board_id is None:
+        raise ValueError("board_url could not be resolved; provide board_id or board_url.")
+    boards = await _load_boards(runtime, agent_token)
     board_id_str = str(board_id)
-    for item in boards or []:
+    for item in boards:
         if not isinstance(item, dict):
             continue
         candidates = {
             str(item.get("board_id", "")),
             str(item.get("boardId", "")),
             str(item.get("boardUrl", "")),
+            str(item.get("board_url", "")),
         }
         if board_id_str in candidates:
-            board_url = item.get("boardUrl")
+            board_url = item.get("boardUrl") or item.get("board_url")
             if board_url:
                 return str(board_url)
-    return board_id_str
+    raise ValueError("board_id was not found in this agent's board list; refresh boards or provide board_url.")

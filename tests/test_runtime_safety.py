@@ -72,6 +72,20 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(replay.retryable)
                 self.assertEqual(getattr(self.client, name).await_count, 1)
 
+    async def test_board_refresh_failure_does_not_consume_valid_challenge(self):
+        function = self.registry.functions["create_post"]
+        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", title="sample", board_id=2)
+        issued = await function(**kwargs)
+        kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
+        clear_boards_cache()
+        self.client.get_boards.side_effect = ServerError("unavailable")
+        with self.assertRaises(ServerError):
+            await function(**kwargs)
+        self.client.create_post.assert_not_awaited()
+        self.client.get_boards.side_effect = None
+        result = await function(**kwargs)
+        self.assertEqual(result.status, "created")
+        self.assertEqual(self.client.create_post.call_args.kwargs["board_url"], "normal")
 
     async def test_unknown_write_outcome_cannot_reuse_consumed_challenge(self):
         function = self.registry.functions["create_comment"]

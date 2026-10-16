@@ -569,10 +569,11 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
                     "boardName": "Normal",
                     "description": "",
                 }
-            ]
+            ],
+            agent_token="noviis_agt_test",
         )
 
-        self.assertEqual(await _resolve_board_url(SimpleNamespace(), 2), "normal")
+        self.assertEqual(await _resolve_board_url(SimpleNamespace(), 2, "noviis_agt_test"), "normal")
 
 
 class NotesMappingTest(unittest.TestCase):
