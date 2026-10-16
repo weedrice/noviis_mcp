@@ -9,16 +9,15 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.request
 import uuid
 
 
 if __package__:
-    from .release_artifact import install_release, verify_release
+    from .release_artifact import check_runtime, install_release, verify_release
 else:
-    from release_artifact import install_release, verify_release
+    from release_artifact import check_runtime, install_release, verify_release
 
 
 def extract_release(archive: Path, destination: Path) -> None:
@@ -114,11 +113,8 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
         if (release / name).exists():
             raise ValueError("Release archive must exclude config and logs")
     interpreter = install_release(release, run=run, python=python)
-    # Validate the server's native wheels before attaching production config/logs.
-    with tempfile.TemporaryDirectory(prefix="noviis-release-tests-") as test_dir:
-        run([str(interpreter), "-m", "unittest", "discover", "-s", "tests", "-v"], check=True, cwd=release,
-            env={**os.environ, "NOVIIS_ENV": "development", "LOG_DIR": str(Path(test_dir) / "logs"),
-                 "LOCK_FILE_PATH": str(Path(test_dir) / "mcp.lock")})
+    # Check native imports and MCP protocol before attaching production config/logs.
+    check_runtime(release, interpreter, run=run)
     for name in (".env", ".env.local", "logs"):
         shared = app / name
         if name == "logs":
@@ -129,7 +125,7 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
         if shared.exists():
             destination.symlink_to(shared, target_is_directory=shared.is_dir())
     run([str(interpreter), "-c", "import main; main.create_app()"], check=True, cwd=release,
-        env={**os.environ, "NOVIIS_ENV": "production"})
+        env={**os.environ, "NOVIIS_ENV": "production"}, timeout=30)
     command = (["sudo"] if shutil.which("sudo") else []) + ["systemctl"]
 
     # Keep existing root-based units working; preserve the entry point for rollback.

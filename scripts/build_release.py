@@ -13,7 +13,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from deploy.release_artifact import digest, install_release, verify_release, write_manifest
+from deploy.release_artifact import check_runtime, digest, install_release, verification_environment, verify_release, write_manifest
 
 
 def build(output: Path, revision: str) -> None:
@@ -46,7 +46,9 @@ def build(output: Path, revision: str) -> None:
         with tarfile.open(candidate, "w:gz") as archive:
             archive.add(root, arcname=".")
         python = install_release(root)
-        subprocess.run([str(python), "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=root, check=True)
+        subprocess.run([str(python), "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=root, check=True,
+                       env=verification_environment(Path(temporary) / "verification"), timeout=180)
+        check_runtime(root, python)
         shutil.copy2(candidate, output)
         checksum = digest(output)
         output.with_suffix(output.suffix + ".sha256").write_text(f"{checksum}  {output.name}\n", encoding="utf-8")

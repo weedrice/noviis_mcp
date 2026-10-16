@@ -3,9 +3,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+
+
+def verification_environment(work: Path) -> dict[str, str]:
+    # Keep only interpreter/OS bootstrap settings. Never inherit application
+    # settings, Python import overrides, proxies, or credentials for verification.
+    bootstrap = {"PATH", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATHEXT",
+                 "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "LD_LIBRARY_PATH"}
+    env = {key: value for key, value in os.environ.items() if key.upper() in bootstrap}
+    return {**env, "NOVIIS_ENV": "development", "LOG_DIR": str(work / "logs"),
+            "LOCK_FILE_PATH": str(work / "mcp.lock"), "NOVIIS_API_BASE_URL": "http://127.0.0.1:9/api/v1",
+            "NOVIIS_AGENT_INTERNAL_SECRET": "runtime-check-synthetic-secret"}
+
+
+def check_runtime(root: Path, interpreter: Path, *, run=subprocess.run) -> None:
+    with tempfile.TemporaryDirectory(prefix="noviis-runtime-check-") as directory:
+        run([str(interpreter), "-m", "deploy.check_runtime"], check=True, cwd=root,
+            env=verification_environment(Path(directory)), timeout=30)
 
 
 def digest(path: Path) -> str:

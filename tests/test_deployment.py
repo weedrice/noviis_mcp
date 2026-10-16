@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from deploy.deploy_release import activate, deploy, extract_release
+from deploy.release_artifact import verification_environment
 
 
 def bundle(archive, files, *, tamper=False):
@@ -59,10 +60,11 @@ class DeploymentTest(unittest.TestCase):
             events.append(("run", args))
             if "-c" in args:
                 self.assertEqual(kwargs["env"]["NOVIIS_ENV"], "production")
-            if "unittest" in args:
+            if "deploy.check_runtime" in args:
                 self.assertEqual(kwargs["env"]["NOVIIS_ENV"], "development")
                 self.assertFalse((kwargs["cwd"] / ".env").exists())
                 self.assertFalse((kwargs["cwd"] / "logs").exists())
+                self.assertEqual(kwargs["timeout"], 30)
         def switch(current, target):
             events.append(("switch", target))
             self.assertTrue((target / "main.py").is_file())
@@ -127,14 +129,14 @@ class DeploymentTest(unittest.TestCase):
         run.assert_not_called()
         switch.assert_not_called()
 
-    def test_native_dependency_test_failure_preserves_current_service_and_shared_config(self):
+    def test_runtime_failure_preserves_current_service_and_shared_config(self):
         entry = self.app / "main.py"
         entry.write_bytes(b"# running release")
         (self.app / ".env").write_bytes(b"# production settings")
         calls = []
         def run(args, **kwargs):
             calls.append(args)
-            if "unittest" in args:
+            if "deploy.check_runtime" in args:
                 self.assertFalse((kwargs["cwd"] / ".env").exists())
                 raise subprocess.CalledProcessError(1, args)
         switch = Mock()
@@ -144,6 +146,33 @@ class DeploymentTest(unittest.TestCase):
         self.assertFalse(any("systemctl" in args for args in calls))
         self.assertEqual(entry.read_bytes(), b"# running release")
         self.assertEqual((self.app / ".env").read_bytes(), b"# production settings")
+
+    def test_runtime_timeout_does_not_switch_or_restart_service(self):
+        switch = Mock()
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            if "deploy.check_runtime" in args:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.run_deploy(run=run, switch=switch)
+        switch.assert_not_called()
+        self.assertFalse(any("systemctl" in args for args in calls))
+
+    def test_runtime_environment_drops_production_limits_and_credentials(self):
+        with patch.dict(os.environ, {
+            "MCP_REQUEST_LIMIT": "10", "CHALLENGE_MAX_PENDING": "0", "NOVIIS_ENV": "production",
+            "NOVIIS_AGENT_INTERNAL_SECRET": "synthetic-production-secret", "PYTHONPATH": "/unexpected",
+            "HTTPS_PROXY": "http://synthetic-proxy", "AWS_SECRET_ACCESS_KEY": "synthetic-credential",
+            "PATH": "/python/bin", "SYSTEMROOT": "C:/Windows",
+        }, clear=True):
+            env = verification_environment(self.root)
+        self.assertEqual(env["PATH"], "/python/bin")
+        self.assertEqual(env["SYSTEMROOT"], "C:/Windows")
+        self.assertEqual(env["NOVIIS_ENV"], "development")
+        self.assertEqual(env["NOVIIS_AGENT_INTERNAL_SECRET"], "runtime-check-synthetic-secret")
+        for key in ("MCP_REQUEST_LIMIT", "CHALLENGE_MAX_PENDING", "PYTHONPATH", "HTTPS_PROXY", "AWS_SECRET_ACCESS_KEY"):
+            self.assertNotIn(key, env)
 
     def test_portable_release_accepts_newer_python_before_target_install_checks_compatibility(self):
         with patch("deploy.release_artifact.sys.version_info", (3, 12)):
