@@ -25,16 +25,16 @@ for deploying to a Linux WAS over SSH.
 
 Deployment flow:
 
-1. GitHub Actions builds a release archive from the repository.
+1. GitHub Actions installs dependencies, compiles the source, runs the unit tests, and builds a release archive.
 2. The archive is copied to the WAS over SSH.
 3. `deploy/deploy.sh` unpacks the release into the app directory.
 4. The script refreshes `.venv`, installs the project, and restarts systemd.
 
 Required GitHub repository secrets:
 
-- `DEPLOY_HOST`: WAS hostname or IP
-- `DEPLOY_USER`: SSH user for deployment
-- `DEPLOY_SSH_KEY`: private SSH key for the deploy user
+- `EC2_HOST`: WAS hostname or IP
+- `EC2_USER`: SSH user for deployment
+- `EC2_SSH_KEY`: private SSH key for the deploy user
 - `DEPLOY_PORT`: optional, defaults to `22`
 - `DEPLOY_PATH`: optional, defaults to `/opt/noviis-mcp`
 - `DEPLOY_SERVICE_NAME`: optional, defaults to `noviis-mcp.service`
