@@ -45,6 +45,7 @@ jobs:
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/noviis-mcp' }}
       SERVICE_NAME: ${{ secrets.DEPLOY_SERVICE_NAME || 'noviis-mcp.service' }}
       HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL || 'http://127.0.0.1:8001/mcp' }}
+      DEPLOY_PYTHON_BIN: ${{ vars.DEPLOY_PYTHON_BIN || 'python3.11' }}
       EC2_HOST: ${{ secrets.EC2_HOST }}
       EC2_USER: ${{ secrets.EC2_USER }}
       EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -59,6 +60,7 @@ jobs:
           test -n "$EC2_HOST"
           test -n "$EC2_USER"
           test -n "$EC2_SSH_KEY"
+          [[ "$DEPLOY_PYTHON_BIN" =~ ^[A-Za-z0-9_./-]+$ ]]
       - name: Verify downloaded archive
         working-directory: dist
         run: sha256sum --check release.tgz.sha256
@@ -78,5 +80,5 @@ jobs:
           scp -P "$DEPLOY_PORT" dist/release.tgz "$EC2_USER@$EC2_HOST:$ARCHIVE_PATH"
           ARCHIVE_SHA256="$(cut -d ' ' -f 1 dist/release.tgz.sha256)"
           ssh -p "$DEPLOY_PORT" "$EC2_USER@$EC2_HOST" \
-            "APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' HEALTH_URL='$HEALTH_URL' ARCHIVE_PATH='$ARCHIVE_PATH' ARCHIVE_SHA256='$ARCHIVE_SHA256' bash -s" \
+            "PYTHON_BIN='$DEPLOY_PYTHON_BIN' APP_DIR='$DEPLOY_PATH' SERVICE_NAME='$SERVICE_NAME' HEALTH_URL='$HEALTH_URL' ARCHIVE_PATH='$ARCHIVE_PATH' ARCHIVE_SHA256='$ARCHIVE_SHA256' bash -s" \
             < deploy/deploy.sh

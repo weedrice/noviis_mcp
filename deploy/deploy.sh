@@ -5,9 +5,10 @@ export APP_DIR="${APP_DIR:?APP_DIR is required}"
 export SERVICE_NAME="${SERVICE_NAME:-noviis-mcp.service}"
 export ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/noviis-mcp-release.tgz}"
 ARCHIVE_SHA256="${ARCHIVE_SHA256:?ARCHIVE_SHA256 from the verified CI artifact is required}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
 printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE_PATH" | sha256sum --check --status
+"$PYTHON_BIN" -c 'import sys; sys.exit("Deployment requires Python 3.11 or newer; set PYTHON_BIN to a supported interpreter" if sys.version_info < (3, 11) else 0)'
 HELPER_DIR="$(mktemp -d)"
 trap 'rm -f -- "$HELPER_DIR/deploy_release.py" "$HELPER_DIR/release_artifact.py"; rmdir -- "$HELPER_DIR"' EXIT
 

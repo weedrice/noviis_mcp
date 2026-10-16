@@ -45,7 +45,7 @@ Required GitHub repository secrets:
 
 Server prerequisites:
 
-- Python 3.11 or newer (`python3`, or set `PYTHON_BIN`) with venv/pip support
+- Python 3.11 or newer with venv/pip support. Actions uses the repository variable `DEPLOY_PYTHON_BIN` (default `python3.11`), passed explicitly to the server as `PYTHON_BIN`. Set it to a command such as `python3.12` or an absolute interpreter path; allowed characters are letters, digits, `_`, `.`, `/`, and `-`. Manual deployments can set `PYTHON_BIN` directly. The selected interpreter's version is checked before extracting deployment helpers.
 - access to a Python package index or an internally configured mirror serving the hash-locked wheels; missing compatible wheels or failed target tests abort before activation
 - `systemd`
 - passwordless `sudo systemctl` for the deploy user, or direct `systemctl` access
