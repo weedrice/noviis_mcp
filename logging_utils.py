@@ -10,14 +10,10 @@ from typing import Any
 from config import LOG_DIR, LOG_JSON, LOG_LEVEL
 
 
-TOKEN_PATTERN = re.compile(r"noviis_agt_[A-Za-z0-9]+")
+TOKEN_PATTERN = re.compile(r"noviis_agt_[A-Za-z0-9_-]+")
 BEARER_PATTERN = re.compile(r"(Bearer\s+)[^\s\"']+", re.IGNORECASE)
-INTERNAL_SECRET_HEADER_PATTERN = re.compile(
-    r"(?P<prefix>\"?x-noviis-internal-secret\"?\s*[:=]\s*\"?)(?P<value>[^\",}\s]+)",
-    re.IGNORECASE,
-)
 SECRET_FIELD_PATTERN = re.compile(
-    r"(?P<prefix>\"?(?:authorization|token|agent_token|api_key|secret|ssh_key|password)\"?\s*[:=]\s*\"?)(?P<value>[^\",}\s]+)",
+    r"""(?P<prefix>["']?(?:x-noviis-internal-secret|authorization|agent_token|token|api_key|secret|ssh_key|password)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)""",
     re.IGNORECASE,
 )
 LOG_RECORD_BASE_FIELDS = frozenset(
@@ -55,17 +51,19 @@ ROTATING_FILE_HANDLER = {
 
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = _sanitize(record.msg)
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {key: _sanitize(value) for key, value in record.args.items()}
-            else:
-                record.args = tuple(_sanitize(value) for value in record.args)
+        # Render first: redacting a format string can remove its % placeholders.
+        message = record.getMessage()
+        if isinstance(record.args, dict):
+            for key, value in record.args.items():
+                if _is_secret_key(key) and str(value):
+                    message = message.replace(str(value), "****")
+        record.msg = _sanitize(message)
+        record.args = ()
 
         for key, value in list(record.__dict__.items()):
             if key in LOG_RECORD_BASE_FIELDS:
                 continue
-            record.__dict__[key] = _sanitize(value)
+            record.__dict__[key] = _sanitize_secret_key(key, value)
         return True
 
 
@@ -75,23 +73,27 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _sanitize(record.getMessage()),
         }
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = _sanitize(self.formatException(record.exc_info))
+        elif record.exc_text:
+            payload["exception"] = _sanitize(record.exc_text)
+        if record.stack_info:
+            payload["stack"] = _sanitize(record.stack_info)
 
         for key, value in _extra_record_items(record):
-            payload[key] = value
+            payload[key] = _sanitize_secret_key(key, value)
         return json.dumps(payload, ensure_ascii=False)
 
 
 class PlainFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         base = super().format(record)
-        extras = dict(_extra_record_items(record))
+        extras = {key: _sanitize_secret_key(key, value) for key, value in _extra_record_items(record)}
         if extras:
-            return f"{base} {json.dumps(extras, ensure_ascii=False)}"
-        return base
+            return _sanitize(f"{base} {json.dumps(extras, ensure_ascii=False)}")
+        return _sanitize(base)
 
 
 def configure_logging() -> None:
@@ -204,7 +206,6 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, str):
         redacted = TOKEN_PATTERN.sub("noviis_agt_****", value)
         redacted = BEARER_PATTERN.sub(r"\1****", redacted)
-        redacted = INTERNAL_SECRET_HEADER_PATTERN.sub(r"\g<prefix>****", redacted)
         redacted = SECRET_FIELD_PATTERN.sub(r"\g<prefix>****", redacted)
         return redacted
     if isinstance(value, dict):
@@ -220,7 +221,10 @@ def _sanitize(value: Any) -> Any:
 
 
 def _sanitize_secret_key(key: Any, value: Any) -> Any:
-    key_str = str(key).lower()
-    if any(token in key_str for token in ("authorization", "token", "secret", "password", "api_key", "ssh_key")):
+    if _is_secret_key(key):
         return "****"
     return _sanitize(value)
+
+
+def _is_secret_key(key: Any) -> bool:
+    return any(token in str(key).lower() for token in ("authorization", "token", "secret", "password", "api_key", "ssh_key"))

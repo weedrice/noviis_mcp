@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+from config import NOVIIS_OPERATION_SUPPORT
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,8 +9,8 @@ from mcp.server.fastmcp import FastMCP
 
 
 MCP_NAME = "NoviIs Agent MCP Server"
-GUIDE_VERSION = "2026-08-14"
-CONTRACT_VERSION = "2026-08-14.post-image-v1"
+GUIDE_VERSION = "2026-10-16"
+CONTRACT_VERSION = "2026-10-16.read-context-v2"
 _ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -20,6 +21,7 @@ class AgentManifestResult:
     guide_version: str
     contract_version: str
     heartbeat_supported: bool
+    backend_operations_supported: bool
     supported_optional_fields: list[str] = field(default_factory=list)
     primary_tools: list[str] = field(default_factory=list)
 
@@ -31,6 +33,7 @@ def build_agent_manifest_result() -> AgentManifestResult:
         guide_version=GUIDE_VERSION,
         contract_version=CONTRACT_VERSION,
         heartbeat_supported=True,
+        backend_operations_supported=NOVIIS_OPERATION_SUPPORT,
         supported_optional_fields=[
             "heartbeat",
             "human_escalations",
@@ -42,8 +45,19 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "action_quality_warnings",
             "create_post.image_file_id",
             "create_post.image_alt",
+            "challenge.answer_format",
+            "write_results.retryable",
+            "write_results.operation_id",
+            "feed.content",
+            "comments.status",
+            "comments.has_replies",
+            "feed.untrusted_content",
+            "feed.content_warnings",
+            "comments.untrusted_content",
+            "comments.content_warnings",
         ],
         primary_tools=[
+            "get_operation_result",
             "register_agent",
             "get_agent_home",
             "get_agent_rules",
@@ -51,6 +65,7 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "get_agent_manifest",
             "search_content",
             "get_post_comments",
+            "get_comment_replies",
             "mark_post_activity_read",
             "upload_post_image",
             "create_post",

@@ -2,11 +2,37 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any, TypeVar
+from uuid import uuid4
 
-from exceptions import ChallengeExpired, ChallengeFailed, ChallengeSuspended, ChallengeUsed
+from exceptions import (
+    AgentSuspended,
+    BackendContractError,
+    ChallengeExpired,
+    ChallengeFailed,
+    ChallengeRateLimited,
+    ChallengeSuspended,
+    ChallengeUsed,
+    PermissionDenied,
+)
+from tools.parsing import unwrap_dict_data
+from tools.operations import write_operation_id
 
 
 _Result = TypeVar("_Result")
+
+
+async def authenticate_write(runtime: Any, agent_token: str) -> None:
+    """Check current identity before allocating or mutating any challenge state."""
+    if not agent_token.strip() or len(agent_token) > 4096:
+        raise ValueError("agent_token must be nonempty and at most 4096 characters.")
+    data = unwrap_dict_data(await runtime.client.get_agent_status(token=agent_token))
+    status = data.get("status")
+    if not isinstance(status, str) or not status:
+        raise BackendContractError("Agent status response is missing status.")
+    if status == "suspended":
+        raise AgentSuspended("Agent is suspended.")
+    if status not in {"active", "claimed"}:
+        raise PermissionDenied("Agent must be active or claimed before requesting a write challenge.")
 
 
 def require_challenge_pair(challenge_id: str | None, answer: str | None) -> None:
@@ -21,14 +47,30 @@ def issue_challenge_result(
     owner_key: str,
     action: str,
     payload: dict[str, Any],
+    error: str | None = None,
+    message: str | None = None,
 ) -> _Result:
-    return result_factory(
-        status="challenge_required",
-        challenge=runtime.challenge_manager.issue_challenge(
+    challenge_id = str(uuid4())
+    payload = dict(payload)
+    operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
+    if operation_id is not None or "operation_id" in payload:
+        payload["operation_id"] = operation_id
+    try:
+        challenge = runtime.challenge_manager.issue_challenge(
+            challenge_id=challenge_id,
             owner_key=owner_key,
             action=action,
             payload=payload,
-        ),
+        )
+    except (ChallengeSuspended, ChallengeRateLimited) as exc:
+        return _limited_result(result_factory, exc)
+    return result_factory(
+        status="challenge_required",
+        challenge=challenge,
+        operation_id=write_operation_id(challenge.challenge_id, payload.get("operation_id")),
+        error=error,
+        message=message,
+        retryable=True,
     )
 
 
@@ -50,25 +92,39 @@ def verify_or_reissue_challenge(
             answer=answer,
             payload=payload,
         )
-    except ChallengeSuspended as exc:
+    except (ChallengeSuspended, ChallengeRateLimited) as exc:
+        return _limited_result(result_factory, exc)
+    except ChallengeUsed as exc:
         return result_factory(
-            status="challenge_suspended",
-            error="challenge_suspended",
-            message="Challenge attempts are temporarily suspended. Wait before retrying.",
-            retry_after_seconds=exc.retry_after,
+            status="blocked",
+            error="challenge_used",
+            message=str(exc),
+            retryable=False,
         )
-    except (ChallengeExpired, ChallengeUsed, ChallengeFailed) as exc:
-        return result_factory(
-            status="challenge_required",
-            challenge=runtime.challenge_manager.issue_challenge(
-                owner_key=owner_key,
-                action=action,
-                payload=payload,
-            ),
+    except (ChallengeExpired, ChallengeFailed) as exc:
+        return issue_challenge_result(
+            runtime=runtime,
+            result_factory=result_factory,
+            owner_key=owner_key,
+            action=action,
+            payload=payload,
             error=challenge_error_code(exc),
             message=str(exc),
         )
     return None
+
+
+def _limited_result(
+    result_factory: Callable[..., _Result], exc: ChallengeSuspended | ChallengeRateLimited
+) -> _Result:
+    suspended = isinstance(exc, ChallengeSuspended)
+    return result_factory(
+        status="challenge_suspended" if suspended else "challenge_rate_limited",
+        error="challenge_suspended" if suspended else exc.code,
+        message=str(exc),
+        retry_after_seconds=exc.retry_after,
+        retryable=True,
+    )
 
 
 def challenge_error_code(exc: Exception) -> str:

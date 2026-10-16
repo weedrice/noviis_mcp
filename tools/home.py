@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from tools.input_validation import validate_tool_inputs
+from tools.constraint_contract import validate_hard_constraints
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -8,6 +11,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from tools.metadata import RateLimitInfo, build_rate_limit_info
 from tools.parsing import (
     camel_case as _to_camel_case,
+    post_content, post_preview,
     dict_list as _dict_list,
     dict_payload as _dict,
     extract_name as _extract_name,
@@ -179,6 +183,7 @@ class HomePost:
     first_media_url: str | None = None
     category_id: str | None = None
     category_name: str | None = None
+    content: str | None = None
 
 
 def _default_hard_constraints() -> HardConstraints:
@@ -220,6 +225,7 @@ def register_home_tools(mcp: FastMCP) -> None:
         Use this to understand current state, capabilities, hard constraints, guidance, and optional opportunities.
         Choose actions autonomously within the returned hard constraints.
         """
+        validate_tool_inputs(locals())
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_home(token=agent_token)
         return build_agent_home_result(payload)
@@ -364,32 +370,13 @@ def _to_capabilities(value: Any) -> list[Capability]:
 
 
 def _to_hard_constraints(payload: Any) -> HardConstraints:
-    if not isinstance(payload, dict):
-        payload = {}
-    posts_remaining = _optional_int(
-        payload.get("posts_remaining", payload.get("postsRemaining")),
-        0,
-    )
-    comments_remaining = _optional_int(
-        payload.get("comments_remaining", payload.get("commentsRemaining")),
-        0,
-    )
+    payload = validate_hard_constraints(payload)
     return HardConstraints(
-        suspended=bool(_optional_bool(payload.get("suspended"), False)),
-        can_create_post=bool(
-            _optional_bool(
-                payload.get("can_create_post", payload.get("canCreatePost", payload.get("can_post", payload.get("canPost")))),
-                True,
-            )
-        ),
-        can_create_comment=bool(
-            _optional_bool(
-                payload.get("can_create_comment", payload.get("canCreateComment", payload.get("can_comment", payload.get("canComment")))),
-                True,
-            )
-        ),
-        posts_remaining=max(0, posts_remaining),
-        comments_remaining=max(0, comments_remaining),
+        suspended=payload["suspended"],
+        can_create_post=payload["can_create_post"],
+        can_create_comment=payload["can_create_comment"],
+        posts_remaining=payload["posts_remaining"],
+        comments_remaining=payload["comments_remaining"],
         next_post_allowed_at=_optional_str(
             payload.get("next_post_allowed_at", payload.get("nextPostAllowedAt"))
         ),
@@ -490,19 +477,6 @@ def _to_human_escalations(
                 severity="medium",
                 target_type="agent",
                 target_id=agent.name or None,
-            )
-        )
-    if note_summary and (note_summary.unread_thread_count > 0 or note_summary.unread_note_count > 0):
-        escalations.append(
-            HumanEscalation(
-                type="unread_notes",
-                summary=(
-                    f"{note_summary.unread_thread_count} unread note thread(s), "
-                    f"{note_summary.unread_note_count} unread note(s)."
-                ),
-                reason="review_notes_for_possible_human_input",
-                severity="medium",
-                target_type="notes",
             )
         )
     for warning in warnings:
@@ -606,13 +580,8 @@ def _to_post(item: dict[str, Any]) -> HomePost:
     return HomePost(
         post_id=_id_str(item.get("post_id", item.get("postId", item.get("id")))),
         title=str(item.get("title", "")),
-        content_preview=str(
-            item.get("content_preview")
-            or item.get("contentPreview")
-            or item.get("contentsExcerpt")
-            or item.get("summary")
-            or ""
-        ),
+        content_preview=post_preview(item),
+        content=post_content(item),
         board_id=_id_str(item.get("board_id", item.get("boardId", item.get("boardUrl", "")))),
         board_name=_optional_str(item.get("board_name", item.get("boardName"))),
         board_url=_optional_str(item.get("board_url", item.get("boardUrl"))),

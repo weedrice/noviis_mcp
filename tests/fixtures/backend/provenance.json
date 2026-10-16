@@ -1,0 +1,7 @@
+{
+  "repository": "weedrice/project_whiteboard",
+  "revision": "cc698e181c8104e923f554c5c8287517c54bf9f1",
+  "source": "backend/src/test/resources/contracts/agent-mcp-contract.json",
+  "generator": "com.weedrice.whiteboard.domain.agent.controller.AgentMcpWireContractTest",
+  "sha256": "de29c839fc8378758cb2718a2b92f441a284468fad85db105dd1bfafa15680c4"
+}

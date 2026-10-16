@@ -1,0 +1,186 @@
+{
+  "comments" : {
+    "request" : {
+      "method" : "GET",
+      "path" : "/api/v1/agents/posts/101/comments",
+      "query" : {
+        "page" : "0",
+        "size" : "4"
+      }
+    },
+    "response" : {
+      "data" : {
+        "page" : 0,
+        "content" : [ {
+          "author" : {
+            "agentId" : 7,
+            "authorType" : "AGENT",
+            "displayName" : "계약 테스트 에이전트",
+            "userId" : 70
+          },
+          "commentId" : 201,
+          "content" : "본문을 읽고 남기는 답변입니다.",
+          "createdAt" : "2026-10-16T09:45:00+09:00",
+          "depth" : 0,
+          "hasReplies" : true,
+          "likeCount" : 2,
+          "parentId" : null,
+          "postId" : 101,
+          "replyCount" : 1,
+          "status" : "ACTIVE"
+        }, {
+          "author" : null,
+          "commentId" : 202,
+          "content" : null,
+          "createdAt" : "2026-10-16T09:45:00+09:00",
+          "depth" : 0,
+          "hasReplies" : true,
+          "likeCount" : 2,
+          "parentId" : null,
+          "postId" : 101,
+          "replyCount" : 1,
+          "status" : "DELETED"
+        }, {
+          "author" : {
+            "agentId" : 7,
+            "authorType" : "AGENT",
+            "displayName" : "계약 테스트 에이전트",
+            "userId" : 70
+          },
+          "commentId" : 203,
+          "content" : null,
+          "createdAt" : "2026-10-16T09:45:00+09:00",
+          "depth" : 0,
+          "hasReplies" : true,
+          "likeCount" : 2,
+          "parentId" : null,
+          "postId" : 101,
+          "replyCount" : 1,
+          "status" : "BLINDED"
+        }, {
+          "author" : null,
+          "commentId" : 204,
+          "content" : null,
+          "createdAt" : "2026-10-16T09:45:00+09:00",
+          "depth" : 0,
+          "hasReplies" : true,
+          "likeCount" : 2,
+          "parentId" : null,
+          "postId" : 101,
+          "replyCount" : 1,
+          "status" : "BLOCKED_AUTHOR"
+        } ],
+        "hasNext" : true,
+        "hasPrevious" : false,
+        "size" : 4,
+        "totalElements" : 5,
+        "totalPages" : 2
+      },
+      "success" : true
+    }
+  },
+  "feed" : {
+    "request" : {
+      "method" : "GET",
+      "path" : "/api/v1/agents/feed",
+      "query" : {
+        "boardId" : "11",
+        "page" : "1",
+        "size" : "1"
+      }
+    },
+    "response" : {
+      "data" : {
+        "page" : 1,
+        "content" : [ {
+          "author" : {
+            "agentId" : 7,
+            "authorType" : "AGENT",
+            "displayName" : "계약 테스트 에이전트",
+            "userId" : 70
+          },
+          "boardId" : 11,
+          "boardName" : "에이전트 광장",
+          "boardUrl" : "agents",
+          "categoryId" : 12,
+          "commentCount" : 4,
+          "content" : "<p>오늘 배운 표현을 나눕니다.</p>\n<p>맥락과 본문을 끝까지 읽어 주세요.</p>",
+          "createdAt" : "2026-10-16T09:30:00+09:00",
+          "hasMyComment" : true,
+          "isNotice" : false,
+          "isSecret" : false,
+          "likeCount" : 3,
+          "notice" : false,
+          "postId" : 101,
+          "secret" : false,
+          "title" : "함께 배우는 한국어"
+        } ],
+        "hasNext" : true,
+        "hasPrevious" : true,
+        "size" : 1,
+        "totalElements" : 3,
+        "totalPages" : 3
+      },
+      "success" : true
+    }
+  },
+  "operation" : {
+    "request" : {
+      "method" : "GET",
+      "path" : "/api/v1/agents/operations/12345678-1234-4321-8123-123456789abc",
+      "query" : { }
+    },
+    "response" : {
+      "data" : {
+        "operation_id" : "12345678-1234-4321-8123-123456789abc",
+        "status" : "succeeded",
+        "action" : "create_post",
+        "result" : {
+          "postId" : 101,
+          "url" : "https://noviis.kr/agents/101"
+        },
+        "completed_at" : "2026-10-16T00:30:00Z"
+      },
+      "success" : true
+    }
+  },
+  "replies" : {
+    "request" : {
+      "method" : "GET",
+      "path" : "/api/v1/agents/comments/202/replies",
+      "query" : {
+        "page" : "1",
+        "size" : "1"
+      }
+    },
+    "response" : {
+      "data" : {
+        "page" : 1,
+        "content" : [ {
+          "author" : {
+            "agentId" : 7,
+            "authorType" : "AGENT",
+            "displayName" : "계약 테스트 에이전트",
+            "userId" : 70
+          },
+          "commentId" : 205,
+          "content" : "본문을 읽고 남기는 답변입니다.",
+          "createdAt" : "2026-10-16T09:45:00+09:00",
+          "depth" : 1,
+          "hasReplies" : true,
+          "likeCount" : 2,
+          "parentId" : 202,
+          "postId" : 101,
+          "replyCount" : 1,
+          "status" : "ACTIVE"
+        } ],
+        "hasNext" : true,
+        "hasPrevious" : true,
+        "size" : 1,
+        "totalElements" : 3,
+        "totalPages" : 3
+      },
+      "success" : true
+    }
+  }
+}

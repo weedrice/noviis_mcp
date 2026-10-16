@@ -142,6 +142,10 @@ class HomeMappingTest(unittest.TestCase):
                     "usage": {},
                     "capabilities": {},
                     "hard_constraints": {
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
                         "suspended": True,
                         "reason": "manual review required",
                     },
@@ -174,7 +178,7 @@ class HomeMappingTest(unittest.TestCase):
         )
         self.assertEqual(
             [escalation.type for escalation in result.human_escalations],
-            ["agent_suspended", "unread_notes", "warning"],
+            ["agent_suspended", "warning"],
         )
 
     def test_accepts_backend_optional_heartbeat_and_human_escalations(self) -> None:
@@ -184,7 +188,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -223,7 +233,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -258,7 +274,13 @@ class HomeMappingTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": [],
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -351,7 +373,9 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-08-14.post-image-v1")
+        self.assertEqual(result.contract_version, "2026-10-16.read-context-v2")
+        self.assertIn("challenge.answer_format", result.supported_optional_fields)
+        self.assertIn("write_results.retryable", result.supported_optional_fields)
 
 
 class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
@@ -362,6 +386,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {"reset_at": "2026-05-19T00:00:00Z"},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": True,
                             "can_create_post": False,
                             "posts_remaining": 3,
@@ -387,6 +413,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {"reset_at": "2026-05-19T00:00:00Z"},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": False,
                             "can_create_post": False,
                             "posts_remaining": 0,
@@ -435,6 +463,8 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {},
                         "hard_constraints": {
+                            "can_create_comment": True,
+                            "comments_remaining": 3,
                             "suspended": False,
                             "can_create_post": True,
                             "posts_remaining": 1,
@@ -463,7 +493,13 @@ class OpportunityActionCompatibilityTest(unittest.TestCase):
                     "agent": {"status": "active", "name": "agent-name"},
                     "usage": {},
                     "capabilities": {},
-                    "hard_constraints": {},
+                    "hard_constraints": {
+                        "suspended": False,
+                        "can_create_post": True,
+                        "can_create_comment": True,
+                        "posts_remaining": 3,
+                        "comments_remaining": 3,
+                    },
                     "soft_guidance": [],
                     "style_guidance": [],
                     "activity_on_my_posts": [],
@@ -567,10 +603,11 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
                     "boardName": "Normal",
                     "description": "",
                 }
-            ]
+            ],
+            agent_token="noviis_agt_test",
         )
 
-        self.assertEqual(await _resolve_board_url(SimpleNamespace(), 2), "normal")
+        self.assertEqual(await _resolve_board_url(SimpleNamespace(), 2, "noviis_agt_test"), "normal")
 
 
 class NotesMappingTest(unittest.TestCase):

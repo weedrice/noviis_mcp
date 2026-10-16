@@ -8,11 +8,15 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import uvicorn
+import anyio
 from mcp.server.fastmcp import FastMCP
 
 from challenge import ChallengeManager
 from client import NoviIsClient
-from config import LOCK_FILE_PATH, LOG_LEVEL, MCP_SERVER_HOST, MCP_SERVER_PORT
+from config import (
+    LOCK_FILE_PATH, LOG_LEVEL, MCP_MAX_REQUEST_BYTES, MCP_SERVER_HOST, MCP_SERVER_PORT,
+    MCP_MAX_CONCURRENT_REQUESTS, MCP_REQUEST_LIMIT, MCP_REQUEST_WINDOW_SECONDS, MCP_REQUEST_TIMEOUT_SECONDS,
+)
 from exceptions import DuplicateInstanceError
 from logging_utils import build_uvicorn_log_config, configure_logging
 from tools import (
@@ -22,10 +26,12 @@ from tools import (
     register_home_tools,
     register_manifest_tools,
     register_note_tools,
+    register_operation_tools,
     register_rules_tools,
     register_search_tools,
 )
 from tools.instructions import MCP_SERVER_INSTRUCTIONS
+from transport import RequestLimitMiddleware, RequestSizeLimitMiddleware, current_request
 
 configure_logging()
 
@@ -78,17 +84,24 @@ def _pid_is_running(pid: int) -> bool:
 pid_lock = PIDLock(LOCK_FILE_PATH)
 
 
-@asynccontextmanager
-async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
-    client = NoviIsClient()
-    runtime = AppRuntime(client=client, challenge_manager=ChallengeManager())
-    try:
-        yield runtime
-    finally:
-        await client.aclose()
-
-
 def create_mcp_server() -> FastMCP:
+    # Stateless HTTP creates a runtime per request; challenge state belongs to
+    # the server instance so verification and limits survive HTTP reconnects.
+    challenge_manager = ChallengeManager()
+
+    @asynccontextmanager
+    async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
+        with anyio.CancelScope() as scope:
+            lifetime = current_request.get()
+            if lifetime is not None:
+                lifetime.cancel = scope.cancel
+            client = NoviIsClient()
+            try:
+                yield AppRuntime(client=client, challenge_manager=challenge_manager)
+            finally:
+                with anyio.move_on_after(5, shield=True):
+                    await client.aclose()
+
     mcp = FastMCP(
         name="NoviIs Agent MCP Server",
         instructions=MCP_SERVER_INSTRUCTIONS,
@@ -97,6 +110,7 @@ def create_mcp_server() -> FastMCP:
         port=MCP_SERVER_PORT,
         streamable_http_path="/mcp",
         json_response=True,
+        stateless_http=True,
         lifespan=mcp_lifespan,
     )
     register_auth_tools(mcp)
@@ -107,12 +121,20 @@ def create_mcp_server() -> FastMCP:
     register_search_tools(mcp)
     register_activity_tools(mcp)
     register_note_tools(mcp)
+    register_operation_tools(mcp)
     return mcp
 
 
 def create_app() -> Any:
     mcp = create_mcp_server()
-    return mcp.streamable_http_app()
+    application = mcp.streamable_http_app()
+    application.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=MCP_MAX_REQUEST_BYTES)
+    application.add_middleware(
+        RequestLimitMiddleware, max_concurrent=MCP_MAX_CONCURRENT_REQUESTS,
+        request_limit=MCP_REQUEST_LIMIT, window_seconds=MCP_REQUEST_WINDOW_SECONDS,
+        timeout_seconds=MCP_REQUEST_TIMEOUT_SECONDS,
+    )
+    return application
 
 
 app = create_app()

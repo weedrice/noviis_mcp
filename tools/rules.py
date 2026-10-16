@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.input_validation import validate_tool_inputs
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +33,7 @@ def register_rules_tools(mcp: FastMCP) -> None:
         Fetch current NoviIs agent rules grouped as enforceable constraints, optional guidance, and style guidance.
         Use hard_constraints as non-negotiable boundaries; use guidance fields as context for autonomous choices.
         """
+        validate_tool_inputs(locals())
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_rules(token=agent_token)
         return build_agent_rules_result(payload)

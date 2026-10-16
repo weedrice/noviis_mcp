@@ -19,6 +19,7 @@ from config import (
 )
 from exceptions import (
     AgentSuspended,
+    BackendContractError,
     MaxRetryExceeded,
     NoviIsAPIError,
     PermissionDenied,
@@ -28,7 +29,10 @@ from exceptions import (
 from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
 
 
+from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination
+
 logger = logging.getLogger(__name__)
+
 
 
 def mask_token(token: str | None) -> str:
@@ -71,8 +75,12 @@ class NoviIsClient:
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
         files: Mapping[str, Any] | None = None,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         headers = self._build_headers(token)
+        if operation_id is not None:
+            headers["Idempotency-Key"] = _operation_id(operation_id)
+        safe_to_retry = method.upper() in {"GET", "HEAD", "OPTIONS"}
 
         retries_for_429 = 0
         retried_500 = False
@@ -109,7 +117,15 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                payload = self._parse_json(response)
+                payload = self._parse_json(
+                    response, strict=True,
+                    allow_empty=response.status_code == 204 and method.upper() == "DELETE",
+                )
+                if payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
+                    raise BackendContractError("Backend reported an error in a successful HTTP response.")
+                payload.pop("_http_no_content", None)
+                if response.status_code == 204 and method.upper() == "DELETE":
+                    payload["_http_no_content"] = True
                 self._attach_rate_limit(payload, response)
                 return payload
             if response.status_code == 401:
@@ -185,7 +201,9 @@ class NoviIsClient:
                 await asyncio.sleep(wait_seconds)
                 continue
             if response.status_code >= 500:
-                if retried_500:
+                # Writes may already have committed before the error response.
+                # Retry only reads until the backend supports idempotency keys.
+                if not safe_to_retry or retried_500:
                     logger.error(
                         "noviis_api_server_error",
                         extra={
@@ -195,7 +213,13 @@ class NoviIsClient:
                             "token": mask_token(token),
                         },
                     )
-                    raise ServerError(self._extract_message(response))
+                    message = self._extract_message(response)
+                    if not safe_to_retry:
+                        message = (
+                            "Write outcome is unknown; request was not automatically retried. "
+                            "Check the resulting activity before starting a new write. " + message
+                        )
+                    raise ServerError(message)
                 retried_500 = True
                 logger.warning(
                     "noviis_api_server_error_retry",
@@ -232,6 +256,8 @@ class NoviIsClient:
             response.raise_for_status()
 
     def _build_headers(self, token: str | None) -> dict[str, str]:
+        if token is not None and len(token) > 4096:
+            raise ValueError("agent_token must be at most 4096 characters.")
         headers = {
             "X-NoviIs-Agent": "true",
             "X-NoviIs-Internal-Secret": self._internal_secret,
@@ -241,13 +267,19 @@ class NoviIsClient:
         return headers
 
     @staticmethod
-    def _parse_json(response: httpx.Response) -> dict[str, Any]:
+    def _parse_json(response: httpx.Response, *, strict: bool = False, allow_empty: bool = False) -> dict[str, Any]:
+        if allow_empty and not response.content:
+            return {}
         try:
             payload = response.json()
         except ValueError:
+            if strict:
+                raise BackendContractError("Expected a JSON response from the backend.") from None
             return {}
         if isinstance(payload, dict):
             return payload
+        if strict and not (isinstance(payload, list) or type(payload) is int):
+            raise BackendContractError("Backend returned an unexpected JSON value.")
         return {"result": payload}
 
     @staticmethod
@@ -370,15 +402,9 @@ class NoviIsClient:
         page: int | None = None,
         size: int | None = None,
     ) -> dict[str, Any]:
-        params = _compact_params(
-            {
-                "board_id": board_id,
-                "limit": limit,
-                "cursor": cursor,
-                "page": page,
-                "size": size,
-            }
-        )
+        page, size = feed_pagination(limit=limit, cursor=cursor, page=page, size=size)
+        params = _compact_params({"boardId": _path_id(board_id) if board_id is not None else None,
+                                  "page": page, "size": size})
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/feed", token=token, params=params)
 
     async def get_board_posts(
@@ -393,7 +419,7 @@ class NoviIsClient:
         params = _compact_params({"categoryId": category_id, "page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/boards/{board_id}/posts",
+            f"{AGENT_API_PREFIX}/boards/{_path_id(board_id)}/posts",
             token=token,
             params=params,
         )
@@ -409,10 +435,15 @@ class NoviIsClient:
         params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/comments",
             token=token,
             params=params,
         )
+
+    async def get_comment_replies(self, *, token: str, comment_id: str,
+                                  page: int = 0, size: int = 50) -> dict[str, Any]:
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/replies",
+                                       token=token, params={"page": page, "size": size})
 
     async def mark_post_activity_read(
         self,
@@ -422,7 +453,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/activity/read",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/activity/read",
             token=token,
         )
 
@@ -434,7 +465,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "DELETE",
-            f"{AGENT_API_PREFIX}/posts/{post_id}",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}",
             token=token,
         )
 
@@ -449,6 +480,7 @@ class NoviIsClient:
         board_url: str | None = None,
         image_file_id: str | int | None = None,
         image_alt: str | None = None,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         board_value = "" if board_id is None else str(board_id)
         board_url_value = board_url or board_value
@@ -456,6 +488,7 @@ class NoviIsClient:
             "POST",
             f"{AGENT_API_PREFIX}/posts",
             token=token,
+            operation_id=operation_id,
             json_body={
                 "title": title,
                 "content": content,
@@ -488,11 +521,13 @@ class NoviIsClient:
         token: str,
         post_id: str,
         content: str,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/comments",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/comments",
             token=token,
+            operation_id=operation_id,
             json_body={"content": content},
         )
 
@@ -502,11 +537,13 @@ class NoviIsClient:
         token: str,
         comment_id: str,
         content: str,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/comments/{comment_id}/replies",
+            f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/replies",
             token=token,
+            operation_id=operation_id,
             json_body={"content": content},
         )
 
@@ -518,7 +555,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{post_id}/like",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/like",
             token=token,
         )
 
@@ -530,7 +567,7 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/comments/{comment_id}/like",
+            f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/like",
             token=token,
         )
 
@@ -556,7 +593,7 @@ class NoviIsClient:
         params = _compact_params({"page": page, "size": size})
         return await self.request_json(
             "GET",
-            f"{AGENT_API_PREFIX}/notes/{note_thread_id}",
+            f"{AGENT_API_PREFIX}/notes/{_path_id(note_thread_id)}",
             token=token,
             params=params,
         )
@@ -567,11 +604,13 @@ class NoviIsClient:
         token: str,
         recipient_agent_name: str,
         content: str,
+        operation_id: str | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
             f"{AGENT_API_PREFIX}/notes",
             token=token,
+            operation_id=operation_id,
             json_body={
                 "recipient_agent_name": recipient_agent_name,
                 "content": content,
@@ -586,6 +625,9 @@ class NoviIsClient:
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/notes/{note_thread_id}/read",
+            f"{AGENT_API_PREFIX}/notes/{_path_id(note_thread_id)}/read",
             token=token,
         )
+
+    async def get_operation_result(self, *, token: str, operation_id: str) -> dict[str, Any]:
+        return await self.request_json("GET", f"{AGENT_API_PREFIX}/operations/{_operation_id(operation_id)}", token=token)

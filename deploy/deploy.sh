@@ -1,56 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:?APP_DIR is required}"
-SERVICE_NAME="${SERVICE_NAME:-noviis-mcp.service}"
-ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/noviis-mcp-release.tgz}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-VENV_DIR="${VENV_DIR:-$APP_DIR/.venv}"
-TMP_DIR="$(mktemp -d)"
+export APP_DIR="${APP_DIR:?APP_DIR is required}"
+export SERVICE_NAME="${SERVICE_NAME:-noviis-mcp.service}"
+export ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/noviis-mcp-release.tgz}"
+ARCHIVE_SHA256="${ARCHIVE_SHA256:?ARCHIVE_SHA256 from the verified CI artifact is required}"
+PYTHON_BIN="${PYTHON_BIN:-python3.11}"
+[[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE_PATH" | sha256sum --check --status
+"$PYTHON_BIN" -c 'import sys; sys.exit("Deployment requires Python 3.11 or newer; set PYTHON_BIN to a supported interpreter" if sys.version_info < (3, 11) else 0)'
+HELPER_DIR="$(mktemp -d)"
+trap 'rm -f -- "$HELPER_DIR/deploy_release.py" "$HELPER_DIR/release_artifact.py"; rmdir -- "$HELPER_DIR"' EXIT
 
-cleanup() {
-  rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT
-
-mkdir -p "$APP_DIR"
-
-if [[ ! -f "$ARCHIVE_PATH" ]]; then
-  echo "Archive not found: $ARCHIVE_PATH" >&2
-  exit 1
-fi
-
-tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
-
-find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-  ! -name ".env" \
-  ! -name ".env.local" \
-  ! -name ".venv" \
-  ! -name "logs" \
-  -exec rm -rf {} +
-
-find "$TMP_DIR" -mindepth 1 -maxdepth 1 \
-  ! -name ".env" \
-  ! -name ".env.local" \
-  -exec cp -a {} "$APP_DIR"/ \;
-
-if [[ ! -d "$VENV_DIR" ]]; then
-  "$PYTHON_BIN" -m venv "$VENV_DIR"
-fi
-
-if ! "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1; then
-  "$VENV_DIR/bin/python" -m ensurepip --upgrade
-fi
-
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install "$APP_DIR"
-
-if command -v sudo >/dev/null 2>&1; then
-  sudo systemctl daemon-reload
-  sudo systemctl restart "$SERVICE_NAME"
-  sudo systemctl status "$SERVICE_NAME" --no-pager
-else
-  systemctl daemon-reload
-  systemctl restart "$SERVICE_NAME"
-  systemctl status "$SERVICE_NAME" --no-pager
-fi
+# Execute helpers only after the complete archive matches the CI checksum.
+tar -xOzf "$ARCHIVE_PATH" ./deploy/deploy_release.py > "$HELPER_DIR/deploy_release.py"
+tar -xOzf "$ARCHIVE_PATH" ./deploy/release_artifact.py > "$HELPER_DIR/release_artifact.py"
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" "$HELPER_DIR/deploy_release.py"

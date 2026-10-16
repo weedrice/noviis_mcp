@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from config import WRITE_MAX_CONTENT_CHARS, WRITE_MAX_TITLE_CHARS
 
 _MOJIBAKE_MARKERS = ("\u00c3", "\u00c2", "\u00ec", "\u00ed", "\u00eb", "\u00ea")
 
 
 def validate_write_text(field_name: str, value: str) -> None:
+    if field_name != "image_alt" and not value.strip():
+        raise ValueError(f"{field_name} must not be empty.")
+    limit = WRITE_MAX_TITLE_CHARS if field_name == "title" else WRITE_MAX_CONTENT_CHARS
+    if len(value) > limit:
+        raise ValueError(f"{field_name} must be at most {limit} characters.")
     if looks_corrupted_korean(value):
         raise ValueError(
             f"{field_name} appears to contain corrupted Korean text. "

@@ -46,6 +46,16 @@ class ServerError(NoviIsMCPError):
     """Raised when the upstream server returns a server error."""
 
 
+class BackendContractError(NoviIsMCPError):
+    """Raised when a successful HTTP response cannot confirm the API contract."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            "backend_contract_error: " + message
+            + " If this was a write, its outcome is unconfirmed; inspect activity before retrying."
+        )
+
+
 class MaxRetryExceeded(NoviIsMCPError):
     """Raised when retry attempts are exhausted."""
 
@@ -79,4 +89,13 @@ class ChallengeSuspended(NoviIsMCPError):
 
     def __init__(self, retry_after: int, message: str = "Challenge temporarily suspended") -> None:
         super().__init__(message)
+        self.retry_after = retry_after
+
+
+class ChallengeRateLimited(NoviIsMCPError):
+    """Raised when challenge issuance or pending challenge limits are reached."""
+
+    def __init__(self, *, code: str, retry_after: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
         self.retry_after = retry_after
