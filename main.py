@@ -26,6 +26,7 @@ from tools import (
     register_home_tools,
     register_manifest_tools,
     register_note_tools,
+    register_operation_tools,
     register_rules_tools,
     register_search_tools,
 )
@@ -120,6 +121,7 @@ def create_mcp_server() -> FastMCP:
     register_search_tools(mcp)
     register_activity_tools(mcp)
     register_note_tools(mcp)
+    register_operation_tools(mcp)
     return mcp
 
 

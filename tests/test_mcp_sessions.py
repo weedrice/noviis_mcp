@@ -134,6 +134,15 @@ class MCPSessionTest(unittest.TestCase):
         self.assertEqual(self.writes, [])
         self.assertEqual(self.status_calls, 0)
 
+    def test_operation_id_round_trips_through_mcp_schema(self):
+        with patch("tools.operations.NOVIIS_OPERATION_SUPPORT", True):
+            session = self.session()
+            issued = self.structured(session)
+            result = self.structured(session, operation_id=issued["operation_id"],
+                                     challenge_id=issued["challenge"]["challenge_id"], answer="2.00")
+            self.assertEqual(result["status"], "created")
+            self.assertEqual(result["operation_id"], issued["operation_id"])
+
     def test_pending_limit_is_shared_across_sessions_and_tools(self):
         first, second = self.session(), self.session()
         for tool in ("create_post", "create_reply", "send_note"):

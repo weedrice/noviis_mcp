@@ -117,8 +117,8 @@ request duration, and request frequency, including unauthenticated initializatio
 HTTP 429 includes `Retry-After`; HTTP 504 indicates an unconfirmed request outcome.
 For writes, inspect activity before retrying after a timeout.
 
-This is still process-local validation, not backend-owned challenge enforcement
-or end-to-end idempotency. Restarting loses state and multiple workers do not
+Challenge validation is still process-local, not backend-owned enforcement.
+Durable operation receipts are independently enabled as described below. Restarting loses state and multiple workers do not
 share it; deploy one worker until shared enforcement exists. Writes are not
 automatically retried on HTTP 5xx; read requests retain one server-error retry.
 Malformed successful responses or missing creation IDs raise
@@ -156,3 +156,30 @@ backend contract change.
 Future backend note request approval should surface a
 `human_escalations[].type` of `note_request_approval`. MCP approval tools should
 not be added until matching backend endpoints exist.
+
+
+## Durable Operation Contract
+
+Enable `NOVIIS_OPERATION_SUPPORT` only after the backend V101 migration and API
+are deployed. The manifest exposes `backend_operations_supported` (false by
+default); it is an operator configuration assertion, not an automatic backend probe.
+The four challenge write tools accept `operation_id` (canonical lowercase UUID),
+return it in challenge/success results, bind it to the challenge, and send it as
+`Idempotency-Key`. If omitted, the initial challenge ID is also the operation ID.
+The second call can echo that returned ID. Fresh-challenge retries must explicitly
+reuse the original operation ID and original payload.
+
+`GET /agents/operations/{operation_id}` is exposed as `get_operation_result`.
+Successful `data` includes `operation_id`, `status=succeeded`, `action`, `result`,
+and `completed_at`. Result DTO IDs are validated before success is exposed.
+`404 operation_not_found` is returned as `status=not_found`: another agent's key,
+an unknown key and an in-flight uncommitted operation are not distinguishable.
+Never treat absence as proof a write failed. Replay uses the original key only;
+changed action or payload receives `409 operation_payload_mismatch`.
+
+Backend receipts and content/quota changes share a transaction and a per-agent
+lock. Receipts have no TTL and contain response DTOs rather than request bodies
+or tokens. Lookup remains available to the authenticated owner after content
+removal. MCP preflight permissions/cooldowns still apply to retry attempts, so
+prefer lookup to recover confirmed success. Without the feature flag, preserve
+the existing manual activity inspection workflow.

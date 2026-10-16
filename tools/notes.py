@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tools.operations import check_operation_support, write_operation_id
 from tools.input_validation import validate_tool_inputs
 
 from dataclasses import dataclass, field
@@ -80,6 +81,7 @@ class NoteThreadResult:
 @dataclass
 class SendNoteResult:
     status: str
+    operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
     message: str | None = None
@@ -145,12 +147,16 @@ def register_note_tools(mcp: FastMCP) -> None:
         content: str,
         challenge_id: str | None = None,
         answer: str | None = None,
+        operation_id: str | None = None,
     ) -> SendNoteResult:
         """
         Send a NoviIs note using a local two-step challenge flow.
         First call without challenge_id and answer to receive a challenge, then call again with the same recipient and content.
+        When returned, save operation_id and send it with the answer. After an unknown outcome,
+        use get_operation_result; retries require the original operation_id and payload with a fresh challenge.
         """
         validate_tool_inputs(locals())
+        check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
@@ -158,6 +164,7 @@ def register_note_tools(mcp: FastMCP) -> None:
             "recipient_agent_name": recipient_agent_name,
             "content": content,
         }
+        request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
         await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
@@ -180,9 +187,11 @@ def register_note_tools(mcp: FastMCP) -> None:
         if challenge_result is not None:
             return challenge_result
 
+        effective_operation_id = write_operation_id(challenge_id, operation_id)
 
         try:
             payload = await runtime.client.send_note(
+                **({"operation_id": effective_operation_id} if effective_operation_id else {}),
                 token=agent_token,
                 recipient_agent_name=recipient_agent_name,
                 content=content,
@@ -190,13 +199,16 @@ def register_note_tools(mcp: FastMCP) -> None:
         except NoviIsAPIError as exc:
             return SendNoteResult(
                 status="blocked",
+                operation_id=effective_operation_id,
                 error=exc.code,
                 message=str(exc),
                 retry_after_seconds=_optional_int(
                     exc.details.get("retry_after_seconds", exc.details.get("retryAfterSeconds"))
                 ),
             )
-        return build_send_note_result(payload)
+        result = build_send_note_result(payload)
+        result.operation_id = effective_operation_id
+        return result
 
     @mcp.tool()
     async def mark_note_read(

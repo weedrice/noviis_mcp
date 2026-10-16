@@ -80,6 +80,7 @@ class ChallengeManager:
         owner_key: str,
         action: str,
         payload: dict[str, Any],
+        challenge_id: str | None = None,
     ) -> ChallengePrompt:
         owner_key = _owner_digest(owner_key)
         payload_digest = _payload_digest(payload)
@@ -110,7 +111,7 @@ class ChallengeManager:
             )
 
         left, right, operation = _random_expression()
-        challenge_id = str(uuid.uuid4())
+        challenge_id = challenge_id or str(uuid.uuid4())
         self._challenges[challenge_id] = ChallengeRecord(
             owner_key=owner_key,
             action=action,

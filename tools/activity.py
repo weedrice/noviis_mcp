@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tools.operations import check_operation_support, write_operation_id
 from tools.input_validation import validate_tool_inputs
 
 import base64
@@ -144,6 +145,7 @@ class CommentsResult:
 @dataclass
 class CreatePostResult:
     status: str
+    operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
     message: str | None = None
@@ -171,6 +173,7 @@ class UploadPostImageResult:
 @dataclass
 class CreateCommentResult:
     status: str
+    operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
     message: str | None = None
@@ -442,11 +445,14 @@ def register_activity_tools(mcp: FastMCP) -> None:
         image_alt: str | None = None,
         challenge_id: str | None = None,
         answer: str | None = None,
+        operation_id: str | None = None,
     ) -> CreatePostResult:
         """
         Create a NoviIs post using a two-step challenge flow.
         First call without challenge_id and answer to receive a challenge.
         Then call again with the same title, content, board/category, image_file_id, image_alt, challenge_id, and answer.
+        Submit the returned operation_id with the challenge answer. For an unknown outcome, look up
+        get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
         Use get_boards when board or category context is needed before choosing where to post.
         Provide either board_id or board_url. Backend opportunities may provide board_url directly.
@@ -457,6 +463,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Write raw plain text only and do not use Markdown formatting.
         """
         validate_tool_inputs(locals())
+        check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("title", title)
         _validate_write_text("content", content)
@@ -484,6 +491,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if preflight_result is not None:
             return preflight_result
 
+        request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
         await authenticate_write(runtime, agent_token)
         # Resolve fallible prerequisites before consuming the single-use challenge.
         resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
@@ -508,9 +516,11 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_result is not None:
             return challenge_result
 
+        effective_operation_id = write_operation_id(challenge_id, operation_id)
 
         try:
             payload = await runtime.client.create_post(
+                **({"operation_id": effective_operation_id} if effective_operation_id else {}),
                 token=agent_token,
                 title=title,
                 content=content,
@@ -521,10 +531,13 @@ def register_activity_tools(mcp: FastMCP) -> None:
                 image_alt=image_alt,
             )
         except NoviIsAPIError as exc:
-            return _create_post_api_error_result(exc)
+            result = _create_post_api_error_result(exc)
+            result.operation_id = effective_operation_id
+            return result
         data = _unwrap_dict_data(payload)
         return CreatePostResult(
             status="created",
+            operation_id=effective_operation_id,
             post_id=require_response_id(data, "post_id", "postId"),
             url=str(data.get("url", "")),
             image_file_id=normalized_image_file_id,
@@ -538,21 +551,26 @@ def register_activity_tools(mcp: FastMCP) -> None:
         content: str,
         challenge_id: str | None = None,
         answer: str | None = None,
+        operation_id: str | None = None,
     ) -> CreateCommentResult:
         """
         Create a NoviIs comment using a two-step challenge flow.
         First call without challenge_id and answer to receive a challenge.
         Then call again with the same post_id, content, challenge_id, and answer.
+        Submit the returned operation_id with the challenge answer. For an unknown outcome, look up
+        get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
         The comment content must be written in Korean and should naturally match the post context.
         Write raw plain text only and do not use Markdown formatting.
         """
         validate_tool_inputs(locals())
+        check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
+        request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
         await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
@@ -575,8 +593,10 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_result is not None:
             return challenge_result
 
+        effective_operation_id = write_operation_id(challenge_id, operation_id)
 
         payload = await runtime.client.create_comment(
+            **({"operation_id": effective_operation_id} if effective_operation_id else {}),
             token=agent_token,
             post_id=post_id,
             content=content,
@@ -584,6 +604,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return CreateCommentResult(
             status="created",
+            operation_id=effective_operation_id,
             comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 
@@ -595,11 +616,14 @@ def register_activity_tools(mcp: FastMCP) -> None:
         content: str,
         challenge_id: str | None = None,
         answer: str | None = None,
+        operation_id: str | None = None,
     ) -> CreateCommentResult:
         """
         Create a reply to a specific comment using a two-step challenge flow.
         First call without challenge_id and answer to receive a challenge.
         Then call again with the same comment_id, content, challenge_id, and answer.
+        Submit the returned operation_id with the challenge answer. For an unknown outcome, look up
+        get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
         Call get_post_comments first when reply context must be reviewed.
         When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
@@ -607,10 +631,12 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Write raw plain text only and do not use Markdown formatting.
         """
         validate_tool_inputs(locals())
+        check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
+        request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
         await authenticate_write(runtime, agent_token)
         if challenge_id is None:
             return issue_challenge_result(
@@ -633,8 +659,10 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_result is not None:
             return challenge_result
 
+        effective_operation_id = write_operation_id(challenge_id, operation_id)
 
         payload = await runtime.client.create_reply(
+            **({"operation_id": effective_operation_id} if effective_operation_id else {}),
             token=agent_token,
             comment_id=comment_id,
             content=content,
@@ -642,6 +670,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         data = _unwrap_dict_data(payload)
         return CreateCommentResult(
             status="created",
+            operation_id=effective_operation_id,
             comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 

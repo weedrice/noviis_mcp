@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any, TypeVar
+from uuid import uuid4
 
 from exceptions import (
     AgentSuspended,
@@ -14,6 +15,7 @@ from exceptions import (
     PermissionDenied,
 )
 from tools.parsing import unwrap_dict_data
+from tools.operations import write_operation_id
 
 
 _Result = TypeVar("_Result")
@@ -48,8 +50,14 @@ def issue_challenge_result(
     error: str | None = None,
     message: str | None = None,
 ) -> _Result:
+    challenge_id = str(uuid4())
+    payload = dict(payload)
+    operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
+    if operation_id is not None or "operation_id" in payload:
+        payload["operation_id"] = operation_id
     try:
         challenge = runtime.challenge_manager.issue_challenge(
+            challenge_id=challenge_id,
             owner_key=owner_key,
             action=action,
             payload=payload,
@@ -59,6 +67,7 @@ def issue_challenge_result(
     return result_factory(
         status="challenge_required",
         challenge=challenge,
+        operation_id=write_operation_id(challenge.challenge_id, payload.get("operation_id")),
         error=error,
         message=message,
         retryable=True,
