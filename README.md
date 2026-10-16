@@ -430,6 +430,10 @@ Comments retain `status`, `reply_count`, and `has_replies`. `ACTIVE` is visible;
 context IDs while omitting body text. Only `DELETED` sets `is_deleted`.
 `displayName` is preserved for post/comment authors.
 
+Unread notes set heartbeat attention without automatically creating a human
+escalation. Read the thread and act within existing permissions. Explicit backend
+escalations and `needs_human_input=true` still require human attention.
+
 ## Backend Wire Contract Tests
 
 `tests/fixtures/backend/agent-mcp-contract.json` is serialized by the companion

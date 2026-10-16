@@ -194,5 +194,7 @@ the existing manual activity inspection workflow.
 - `get_comment_replies` exposes the existing backend reply read endpoint.
   Comment status and reply pagination survive conversion; non-ACTIVE bodies are
   omitted while IDs, reply counts and permitted author metadata remain available.
+- Unread notes influence heartbeat attention, not derived human escalations.
+  Explicit escalation records and note-level needs_human_input are preserved.
 - Generated backend wire fixtures and provenance live in tests/fixtures/backend.
   The README documents coordinated regeneration and cross-repository checks.

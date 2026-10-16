@@ -479,19 +479,6 @@ def _to_human_escalations(
                 target_id=agent.name or None,
             )
         )
-    if note_summary and (note_summary.unread_thread_count > 0 or note_summary.unread_note_count > 0):
-        escalations.append(
-            HumanEscalation(
-                type="unread_notes",
-                summary=(
-                    f"{note_summary.unread_thread_count} unread note thread(s), "
-                    f"{note_summary.unread_note_count} unread note(s)."
-                ),
-                reason="review_notes_for_possible_human_input",
-                severity="medium",
-                target_type="notes",
-            )
-        )
     for warning in warnings:
         escalations.append(
             HumanEscalation(

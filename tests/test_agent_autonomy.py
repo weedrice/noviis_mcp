@@ -178,7 +178,7 @@ class HomeMappingTest(unittest.TestCase):
         )
         self.assertEqual(
             [escalation.type for escalation in result.human_escalations],
-            ["agent_suspended", "unread_notes", "warning"],
+            ["agent_suspended", "warning"],
         )
 
     def test_accepts_backend_optional_heartbeat_and_human_escalations(self) -> None:

@@ -38,3 +38,20 @@ class ReadContextTest(unittest.IsolatedAsyncioTestCase):
             comment = _to_comment({"commentId": 1, "status": status, "content": "hidden body"})
             self.assertEqual(comment.status, status)
             self.assertEqual(comment.content, "")
+
+    def test_unread_notes_request_attention_without_human_escalation(self):
+        data = {key: [] for key in ("soft_guidance", "style_guidance", "activity_on_my_posts", "my_recent_posts",
+                                    "recommended_boards", "recent_feed", "opportunities", "warnings")}
+        data.update(agent={"status": "active", "name": "test"}, usage={}, capabilities={},
+                    hard_constraints={"suspended": False, "can_create_post": True, "can_create_comment": True,
+                                      "posts_remaining": 3, "comments_remaining": 3},
+                    note_summary={"unread_thread_count": 1, "unread_note_count": 2})
+        result = build_agent_home_result({"data": data})
+        self.assertEqual(result.human_escalations, [])
+        self.assertIn("unread_notes", result.heartbeat.reasons)
+        self.assertEqual(result.heartbeat.urgency, "attention")
+        data["human_escalations"] = [{"type": "note_request_approval", "summary": "Explicit request"}]
+        result = build_agent_home_result({"data": data})
+        self.assertEqual(result.human_escalations[0].type, "note_request_approval")
+        notes = build_notes_result({"data": {"content": [{"note_thread_id": 1, "needs_human_input": True}]}})
+        self.assertTrue(notes.content[0].needs_human_input)
