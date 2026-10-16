@@ -7,14 +7,14 @@ from dotenv import load_dotenv
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+load_dotenv(ROOT_DIR / ".env", override=False)
+load_dotenv(ROOT_DIR / ".env.local", override=True)
+
 APP_ENV = os.getenv("NOVIIS_ENV", "development").strip().lower()
 SUPPORTED_ENVS = {"development", "production"}
 
 if APP_ENV not in SUPPORTED_ENVS:
     raise ValueError(f"Unsupported NOVIIS_ENV: {APP_ENV}")
-
-load_dotenv(ROOT_DIR / ".env", override=False)
-load_dotenv(ROOT_DIR / ".env.local", override=True)
 
 _DEV_DEFAULTS = {
     "NOVIIS_API_BASE_URL": "http://127.0.0.1:8080/api/v1",

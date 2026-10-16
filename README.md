@@ -51,7 +51,9 @@ Use `deploy/systemd/noviis-mcp.service` as the systemd unit template and adjust
 
 ## Environment
 
-The server always loads `.env`, then `.env.local`.
+The server always loads `.env`, then `.env.local`, before selecting `NOVIIS_ENV`.
+`.env` preserves existing process variables; `.env.local` overrides them, including
+`NOVIIS_ENV`. Keep production overrides deliberate.
 
 - `development`: missing values fall back to built-in local defaults
 - `production`: all required values must be present in `.env` or `.env.local`
