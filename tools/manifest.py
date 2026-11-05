@@ -55,6 +55,8 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "feed.content_warnings",
             "comments.untrusted_content",
             "comments.content_warnings",
+            "opportunities.available_actions.missing_params",
+            "opportunities.available_actions.input_complete",
         ],
         primary_tools=[
             "get_operation_result",

@@ -63,6 +63,25 @@ class ContractConsistencyTest(unittest.TestCase):
         _, invalid, _, _ = validate_action("get_operation_result", {"operation_id": 170})
         self.assertEqual(invalid, ["operation_id"])
 
+    def test_feed_recommendations_obey_actual_pagination_rules(self):
+        for params, expected in (({"cursor": "unsupported"}, ["cursor"]),
+                                 ({"limit": 5, "size": 10}, ["limit", "size"])):
+            action, = _to_opportunity_actions([{"tool": "get_feed", "params": params}])
+            self.assertFalse(action.valid)
+            self.assertEqual(action.invalid_params, expected)
+
+    def test_image_recommendations_share_post_validation_and_missing_attachment_rule(self):
+        params = {"title": "sample", "content": "sample", "board_id": 9, "image_alt": "description"}
+        incomplete, = _to_opportunity_actions([{"tool": "create_post", "params": params}])
+        self.assertTrue(incomplete.valid)
+        self.assertFalse(incomplete.input_complete)
+        self.assertEqual(incomplete.missing_params, ["image_file_id"])
+        for extra, field in (({"image_file_id": "bad"}, "image_file_id"),
+                             ({"image_alt": "x" * 301}, "image_alt")):
+            action, = _to_opportunity_actions([{"tool": "create_post", "params": {**params, **extra}}])
+            self.assertFalse(action.valid)
+            self.assertIn(field, action.invalid_params)
+
     def test_partial_actions_expose_alternative_target_and_paired_challenge_inputs(self):
         post, = _to_opportunity_actions([{"tool": "create_post", "params": {"title": "sample", "content": "sample"}}])
         self.assertTrue(post.valid)
@@ -72,3 +91,6 @@ class ContractConsistencyTest(unittest.TestCase):
         malformed, = _to_opportunity_actions([{"tool": "get_feed", "params": []}])
         self.assertFalse(malformed.valid)
         self.assertEqual(malformed.invalid_params, ["params"])
+        empty, = _to_opportunity_actions([{"tool": "create_comment", "params": {"post_id": 1, "content": " "}}])
+        self.assertFalse(empty.valid)
+        self.assertIn("content", empty.invalid_params)

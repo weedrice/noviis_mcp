@@ -8,7 +8,8 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, resource_id, validate_tool_inputs
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, resource_id, validate_tool_inputs
+from tools.write_safety import validate_write_text
 
 
 @lru_cache(maxsize=1)
@@ -68,10 +69,41 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
             validate_tool_inputs({name: value})
             if name in RESOURCE_ID_PARAMS and value is not None:
                 params[name] = resource_id(value)
+            if tool_name in {"create_post", "create_comment", "create_reply", "send_note"} and name in {"title", "content"}:
+                validate_write_text(name, value)
         except (ValueError, TypeError, AttributeError):
             invalid.add(name)
     if tool_name == "create_post" and params.get("board_id") is None and not params.get("board_url"):
         missing.add("board_url")  # Supplying board_id also satisfies this alternative.
+    if tool_name == "create_post":
+        from tools.activity import _normalize_image_file_id
+
+        image_id = None
+        if "image_file_id" not in invalid:
+            try:
+                image_id = _normalize_image_file_id(params.get("image_file_id"))
+                if "image_file_id" in params:
+                    params["image_file_id"] = image_id
+            except (ValueError, TypeError, AttributeError):
+                invalid.add("image_file_id")
+        alt = params.get("image_alt")
+        if isinstance(alt, str):
+            try:
+                validate_write_text("image_alt", alt)
+                if len(alt) > 300:
+                    raise ValueError("Image description is too long")
+            except ValueError:
+                invalid.add("image_alt")
+            if alt.strip() and image_id is None:
+                missing.add("image_file_id")
+    if tool_name == "get_feed":
+        try:
+            feed_pagination(**{name: params.get(name) for name in ("limit", "cursor", "page", "size")})
+        except (ValueError, TypeError):
+            if params.get("cursor") is not None:
+                invalid.add("cursor")
+            if params.get("limit") is not None and params.get("size") is not None and params["limit"] != params["size"]:
+                invalid.update({"limit", "size"})
     if tool_name in {"create_post", "create_comment", "create_reply", "send_note"}:
         if params.get("challenge_id") is not None and params.get("answer") is None:
             missing.add("answer")

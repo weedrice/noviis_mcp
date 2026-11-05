@@ -9,48 +9,57 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "tests/fixtures/backend"
-SOURCE = "backend/src/test/resources/contracts/agent-mcp-contract.json"
+CONTRACTS = {
+    "content": ("agent-mcp-contract.json", "provenance.json",
+                "com.weedrice.whiteboard.domain.agent.controller.AgentMcpWireContractTest"),
+    "home-boards": ("agent-home-board-contract.json", "home-board-provenance.json",
+                    "com.weedrice.whiteboard.domain.agent.service.AgentHomeBoardWireContractTest"),
+}
 
 
 def normalized(path: Path) -> bytes:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")
 
 
-def check_local() -> None:
-    provenance = json.loads((DESTINATION / "provenance.json").read_text(encoding="utf-8"))
-    actual = hashlib.sha256(normalized(DESTINATION / "agent-mcp-contract.json")).hexdigest()
+def check_local(contract: str = "content") -> None:
+    filename, provenance_file, _ = CONTRACTS[contract]
+    provenance = json.loads((DESTINATION / provenance_file).read_text(encoding="utf-8"))
+    actual = hashlib.sha256(normalized(DESTINATION / filename)).hexdigest()
     if actual != provenance["sha256"]:
         raise ValueError("Backend fixture differs from its recorded generated snapshot; regenerate and sync it")
 
 
-def sync(backend: Path, *, check: bool) -> None:
-    source = normalized(backend / SOURCE)
+def sync(backend: Path, *, check: bool, contract: str = "content") -> None:
+    filename, provenance_file, generator = CONTRACTS[contract]
+    source_path = "backend/src/test/resources/contracts/" + filename
+    source = normalized(backend / source_path)
     if check:
-        check_local()
-        if source != normalized(DESTINATION / "agent-mcp-contract.json"):
+        check_local(contract)
+        if source != normalized(DESTINATION / filename):
             raise ValueError("MCP and backend wire fixtures differ")
         return
     # Require a committed fixture so provenance describes a reviewable backend revision.
     revision = subprocess.check_output(["git", "-C", str(backend), "rev-parse", "HEAD"], text=True).strip()
-    committed = subprocess.check_output(["git", "-C", str(backend), "show", f"{revision}:{SOURCE}"])
+    committed = subprocess.check_output(["git", "-C", str(backend), "show", f"{revision}:{source_path}"])
     if source != committed.replace(b"\r\n", b"\n"):
         raise ValueError("Commit the generated backend fixture before syncing")
     DESTINATION.mkdir(parents=True, exist_ok=True)
-    (DESTINATION / "agent-mcp-contract.json").write_bytes(source)
-    provenance = {"repository": "weedrice/project_whiteboard", "revision": revision, "source": SOURCE,
-                  "generator": "com.weedrice.whiteboard.domain.agent.controller.AgentMcpWireContractTest",
+    (DESTINATION / filename).write_bytes(source)
+    provenance = {"repository": "weedrice/project_whiteboard", "revision": revision, "source": source_path,
+                  "generator": generator,
                   "sha256": hashlib.sha256(source).hexdigest()}
-    (DESTINATION / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    (DESTINATION / provenance_file).write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=Path)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--contract", choices=CONTRACTS, default="content")
     args = parser.parse_args()
     if args.backend:
-        sync(args.backend.resolve(), check=args.check)
+        sync(args.backend.resolve(), check=args.check, contract=args.contract)
     elif args.check:
-        check_local()
+        check_local(args.contract)
     else:
         parser.error("--backend is required when updating the fixture")
