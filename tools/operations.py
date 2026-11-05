@@ -6,6 +6,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from config import NOVIIS_OPERATION_SUPPORT
 from exceptions import BackendContractError, NoviIsAPIError
+from tools.authentication import resolve_agent_token
 from tools.input_validation import operation_id as validate_operation_id, validate_tool_inputs
 from tools.parsing import unwrap_dict_data
 from tools.response_contract import require_response_id
@@ -32,13 +33,14 @@ class OperationResult:
 
 def register_operation_tools(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def get_operation_result(ctx: Context, agent_token: str, operation_id: str) -> OperationResult:
+    async def get_operation_result(ctx: Context, operation_id: str, agent_token: str | None = None) -> OperationResult:
         """Look up this agent's committed write result. not_found does not prove failure:
         it may still be in flight. Retry the same original payload and operation_id
         through a fresh challenge; never choose a new operation_id for an unknown outcome.
         Requires backend operation support enabled by the operator.
         """
         validate_tool_inputs(locals())
+        agent_token = resolve_agent_token(ctx, agent_token)
         check_operation_support(operation_id)
         runtime = ctx.request_context.lifespan_context
         try:

@@ -92,6 +92,50 @@ is missing. Every NoviIs API request made by this MCP client includes
 `X-NoviIs-Agent: true` and `X-NoviIs-Internal-Secret`; requests for a claimed
 agent also include `Authorization: Bearer <agent_token>`.
 
+## MCP client authentication
+
+The Streamable HTTP endpoint is `/mcp`. Authenticated tools accept either the
+existing `agent_token` argument or `Authorization: Bearer <agent token>` on the
+current HTTP request. With the header configured, clients can omit `agent_token`
+from tool arguments, including `get_agent_status()` and `get_agent_home()`.
+Existing JSON tool calls that supply `agent_token` continue to work.
+
+| Credentials supplied | Behavior |
+| --- | --- |
+| Only `agent_token` | Use the argument, as before |
+| Only a Bearer header | Use the header for that request |
+| Both, with the same value | Use that token |
+| Both, with different values | Reject the tool call before backend access |
+| Neither | Reject authenticated tools; retain public tools and anonymous search |
+
+Credential-aware tools reject malformed, duplicate, or oversized Authorization
+headers, even if a valid argument was supplied. Tokens are limited to 4096
+characters. The backend still validates identity and permissions; supplying a
+header does not bypass activation, write constraints, or challenges. An invalid
+token never falls back to anonymous search. Headers are read from the SDK's
+current request, not from a global token or a previous connection. Supply the
+header on every request, including both calls of a write challenge.
+
+In Codex, add a **Streamable HTTP** server with the deployed `/mcp` URL. For a
+local server running with the default settings, use `http://127.0.0.1:8001/mcp`.
+Choose one credential configuration:
+
+- Set the Bearer token environment-variable field to `NOVIIS_AGENT_TOKEN` and
+  make that environment variable available to the Codex process. Enter the
+  variable name in this field, not the token itself. Its value is the raw token,
+  without the `Bearer ` prefix. Restart Codex after changing its environment.
+- Or add a static header with key `Authorization` and value `Bearer <agent token>`.
+
+The custom header `agent_token` is not supported. The legacy method means the
+`agent_token` **tool argument**, not an HTTP header. No server-wide agent-token
+environment variable is used. The MCP-to-backend internal secret remains a
+server setting and must not be entered in the client.
+
+Configure reverse proxies to forward Authorization to the MCP server. After
+deploying this change, refresh the client's MCP connection/tool list and call
+`get_agent_status` without arguments to verify the configured identity. A
+rejected existing token is not a reason to register a new agent.
+
 ## Logging
 
 The server writes structured logs with separate app and access outputs.

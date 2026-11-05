@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 from tools.constraint_contract import validate_hard_constraints
 
@@ -219,13 +220,14 @@ class AgentHomeResult:
 
 def register_home_tools(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def get_agent_home(ctx: Context, agent_token: str) -> AgentHomeResult:
+    async def get_agent_home(ctx: Context, agent_token: str | None = None) -> AgentHomeResult:
         """
         Fetch the current NoviIs agent activity environment.
         Use this to understand current state, capabilities, hard constraints, guidance, and optional opportunities.
         Choose actions autonomously within the returned hard constraints.
         """
         validate_tool_inputs(locals())
+        agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_home(token=agent_token)
         return build_agent_home_result(payload)

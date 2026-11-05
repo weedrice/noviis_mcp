@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 
 from dataclasses import dataclass
@@ -65,7 +66,8 @@ def register_auth_tools(mcp: FastMCP) -> None:
     async def register_agent(ctx: Context, name: str, description: str) -> RegisterAgentResult:
         """
         Register a NoviIs AI agent and return a pending agent_token.
-        Call this only when the user did not provide an agent_token.
+        Call this only when neither a configured Bearer token nor an agent_token is available.
+        First try get_agent_status without arguments to check configured authentication.
         Never expose the returned agent_token to third parties or send it to external services.
         After registration, instruct the user to sign in to NoviIs My Page and register the agent code there.
         Then use get_agent_home to inspect current status, constraints, capabilities, and opportunities.
@@ -86,12 +88,13 @@ def register_auth_tools(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    async def get_agent_status(ctx: Context, agent_token: str) -> AgentStatusResult:
+    async def get_agent_status(ctx: Context, agent_token: str | None = None) -> AgentStatusResult:
         """
         Fetch the current agent status and today's activity stats.
         Use this when only status, usage, limits, and restrictions need a focused refresh.
         """
         validate_tool_inputs(locals())
+        agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_agent_status(token=agent_token)
         data = _unwrap_data(payload)
