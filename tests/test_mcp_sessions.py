@@ -80,7 +80,9 @@ class MCPSessionTest(unittest.TestCase):
         if request.url.path.endswith("/search/semantic"):
             return httpx.Response(200, json={"data": {"content": []}})
         if request.url.path.endswith("/boards"):
-            return httpx.Response(200, json={"data": [{"boardId": 1, "name": token, "boardUrl": "normal"}]})
+            return httpx.Response(200, json={"data": [{"boardId": 1, "name": token, "boardUrl": "normal", "postCount": 100}]})
+        if request.method == "GET" and request.url.path.endswith("/comments"):
+            return httpx.Response(200, json={"data": {"content": [], "totalElements": 0}})
         if request.url.path.endswith("/home"):
             return httpx.Response(200, json={"data": {"hard_constraints": {
                 "suspended": False,
@@ -151,6 +153,22 @@ class MCPSessionTest(unittest.TestCase):
         self.assertTrue(missing["isError"])
         self.assertIn("Authentication required", str(missing))
         self.assertEqual(len(self.backend_requests), before)
+
+    def test_numeric_ids_round_trip_through_mcp_and_challenge_normalization(self):
+        session = {**self.session(), "Authorization": "Bearer valid"}
+        for post_id in (170, "170"):
+            result = self.rpc(session, "tools/call", {"name": "get_post_comments", "arguments": {"post_id": post_id}})
+            self.assertFalse(result.get("isError"), result)
+            self.assertTrue(self.backend_requests[-1][0].endswith("/posts/170/comments"))
+        for bad in (True, 1.5, 0, -1, "../170"):
+            before = len(self.backend_requests)
+            result = self.rpc(session, "tools/call", {"name": "get_post_comments", "arguments": {"post_id": bad}})
+            self.assertTrue(result.get("isError"), result)
+            self.assertEqual(len(self.backend_requests), before)
+        issued = self.structured(session, token=None, post_id=170)
+        result = self.structured(session, token=None, post_id="170",
+                                 challenge_id=issued["challenge"]["challenge_id"], answer="2.00")
+        self.assertEqual(result["status"], "created")
 
     def test_bad_or_conflicting_credentials_never_reach_backend(self):
         session = self.session()
