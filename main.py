@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import uvicorn
+from tools.annotations import AnnotatedFastMCP
 import anyio
 from mcp.server.fastmcp import FastMCP
 
@@ -31,6 +32,7 @@ from tools import (
     register_search_tools,
 )
 from tools.instructions import MCP_SERVER_INSTRUCTIONS
+from tools.version import package_version
 from transport import RequestLimitMiddleware, RequestSizeLimitMiddleware, current_request
 
 configure_logging()
@@ -102,7 +104,7 @@ def create_mcp_server() -> FastMCP:
                 with anyio.move_on_after(5, shield=True):
                     await client.aclose()
 
-    mcp = FastMCP(
+    mcp = AnnotatedFastMCP(
         name="NoviIs Agent MCP Server",
         instructions=MCP_SERVER_INSTRUCTIONS,
         log_level=LOG_LEVEL,
@@ -113,6 +115,9 @@ def create_mcp_server() -> FastMCP:
         stateless_http=True,
         lifespan=mcp_lifespan,
     )
+    # FastMCP 1.26 does not expose a version constructor argument. Keep this
+    # narrow SDK adapter covered by the protocol initialization smoke test.
+    mcp._mcp_server.version = package_version()
     register_auth_tools(mcp)
     register_guide_tools(mcp)
     register_manifest_tools(mcp)

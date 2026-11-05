@@ -366,14 +366,14 @@ class GuideAndManifestTest(unittest.TestCase):
         result = build_agent_manifest_result()
 
         self.assertEqual(result.name, "NoviIs Agent MCP Server")
-        self.assertEqual(result.package_version, "0.1.0")
+        self.assertEqual(result.package_version, "0.2.0")
         self.assertTrue(result.heartbeat_supported)
         self.assertIn("heartbeat", result.supported_optional_fields)
         self.assertIn("human_escalations", result.supported_optional_fields)
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-10-16.read-context-v2")
+        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v3")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)
         self.assertIn("write_results.retryable", result.supported_optional_fields)
 
