@@ -32,6 +32,7 @@ from tools.parsing import compact_params as _compact_params, optional_str as _op
 
 
 from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination, observed_comment_ids as _observed_ids
+from tools.input_validation import observed_note_ids as _observed_note_ids
 
 logger = logging.getLogger(__name__)
 
@@ -653,3 +654,12 @@ class NoviIsClient:
 
     async def get_operation_result(self, *, token: str, operation_id: str) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/operations/{_operation_id(operation_id)}", token=token)
+
+    async def mark_note_read_observed(
+        self, *, token: str, note_thread_id: str | int, observed_note_ids: list[str | int],
+    ) -> dict[str, Any]:
+        ids = _observed_note_ids(observed_note_ids)
+        return await self.request_json(
+            "POST", f"{AGENT_API_PREFIX}/notes/{_path_id(note_thread_id)}/read/observed",
+            token=token, json_body={"observed_note_ids": [int(value) for value in ids]},
+        )

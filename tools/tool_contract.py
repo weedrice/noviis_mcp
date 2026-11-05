@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, resource_id, validate_tool_inputs
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs
 from tools.write_safety import validate_write_text
 
 
@@ -74,6 +74,8 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
                 params[name] = resource_id(value)
             if name == "observed_comment_ids":
                 params[name] = observed_comment_ids(value)
+            if name == "observed_note_ids":
+                params[name] = observed_note_ids(value)
             if tool_name in {"create_post", "create_comment", "create_reply", "send_note"} and name in {"title", "content"}:
                 validate_write_text(name, value, tool_name=tool_name)
         except (ValueError, TypeError, AttributeError):

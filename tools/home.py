@@ -3,6 +3,7 @@ from __future__ import annotations
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 from tools.constraint_contract import validate_hard_constraints
+from tools.status_contract import policy_field, validate_policy_quota
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,6 +43,9 @@ class AgentUsage:
     posts_today: int
     comments_today: int
     reset_at: str
+    max_notes_per_day: int | None = None
+    notes_remaining: int | None = None
+    next_note_allowed_at: str | None = None
 
 
 @dataclass
@@ -56,6 +60,8 @@ class Capability:
     comments_remaining: int | None = None
     next_post_allowed_at: str | None = None
     next_comment_allowed_at: str | None = None
+    notes_remaining: int | None = None
+    next_note_allowed_at: str | None = None
 
 
 @dataclass
@@ -70,6 +76,10 @@ class HardConstraints:
     next_comment_allowed_at: str | None = None
     write_endpoints_enforce: list[str] = field(default_factory=list)
     reason: str | None = None
+    can_send_note: bool | None = None
+    notes_remaining: int | None = None
+    note_daily_limit: int | None = None
+    next_note_allowed_at: str | None = None
 
 
 @dataclass
@@ -325,10 +335,16 @@ def _to_agent(payload: Any, root: dict[str, Any]) -> HomeAgent:
 def _to_usage(payload: Any) -> AgentUsage:
     if not isinstance(payload, dict):
         payload = {}
+    max_notes = policy_field(payload, "max_notes_per_day", int, label="usage", required=False)
+    notes_remaining = policy_field(payload, "notes_remaining", int, label="usage", required=False)
+    validate_policy_quota(max_notes, notes_remaining, "usage.notes_remaining")
     return AgentUsage(
         posts_today=_optional_int(payload.get("posts_today", payload.get("postsToday")), 0),
         comments_today=_optional_int(payload.get("comments_today", payload.get("commentsToday")), 0),
         reset_at=str(payload.get("reset_at", payload.get("resetAt", ""))),
+        max_notes_per_day=max_notes,
+        notes_remaining=notes_remaining,
+        next_note_allowed_at=policy_field(payload, "next_note_allowed_at", str, label="usage", required=False, nullable=True, timestamp=True),
     )
 
 
@@ -357,6 +373,8 @@ def _to_capabilities(value: Any) -> list[Capability]:
                 required_context=_str_list(item.get("required_context", item.get("requiredContext"))),
                 tool=_optional_str(item.get("tool")),
                 unavailable_reasons=unavailable_reasons,
+                notes_remaining=policy_field(item, "notes_remaining", int, label="capabilities", required=False, nullable=True),
+                next_note_allowed_at=policy_field(item, "next_note_allowed_at", str, label="capabilities", required=False, nullable=True, timestamp=True),
                 posts_remaining=_optional_int_or_none(
                     item.get("posts_remaining", item.get("postsRemaining"))
                 ),
@@ -382,6 +400,10 @@ def _to_hard_constraints(payload: Any) -> HardConstraints:
         can_create_comment=payload["can_create_comment"],
         posts_remaining=payload["posts_remaining"],
         comments_remaining=payload["comments_remaining"],
+        can_send_note=payload["can_send_note"],
+        notes_remaining=payload["notes_remaining"],
+        note_daily_limit=payload["note_daily_limit"],
+        next_note_allowed_at=payload["next_note_allowed_at"],
         next_post_allowed_at=_optional_str(
             payload.get("next_post_allowed_at", payload.get("nextPostAllowedAt"))
         ),

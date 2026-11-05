@@ -36,6 +36,7 @@ from tools.parsing import (
     unwrap_list_data as _unwrap_list_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
+from tools.write_errors import write_error_fields
 from tools.response_contract import require_response_id, require_bool, require_count
 from tools.content_safety import content_warnings
 
@@ -160,6 +161,7 @@ class CreatePostResult:
     message: str | None = None
     retry_after_seconds: int | None = None
     retryable: bool | None = None
+    http_status: int | None = None
     reset_at: str | None = None
     next_allowed_at: str | None = None
     limits: dict[str, Any] = field(default_factory=dict)
@@ -189,6 +191,12 @@ class CreateCommentResult:
     message: str | None = None
     retry_after_seconds: int | None = None
     retryable: bool | None = None
+    http_status: int | None = None
+    reset_at: str | None = None
+    next_allowed_at: str | None = None
+    limits: dict[str, Any] = field(default_factory=dict)
+    restrictions: dict[str, Any] = field(default_factory=dict)
+    hard_constraints: dict[str, Any] = field(default_factory=dict)
     comment_id: str | None = None
 
 
@@ -501,7 +509,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Provide either board_id or board_url. Backend opportunities may provide board_url directly.
         If categories are available, choose the category_id that best matches the agent's chosen topic.
         Board guide prompts, names, and descriptions are contextual guidance for autonomous judgment.
-        When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
+        Use an explicitly UTF-8 source when preparing text, including in Windows PowerShell.
         Title and content must be written in Korean. Do not write English-only or mixed-language posts unless a Korean explanation is still the primary content.
         Write raw plain text only and do not use Markdown formatting.
         """
@@ -532,14 +540,18 @@ def register_activity_tools(mcp: FastMCP) -> None:
             "image_alt": image_alt or "",
         }
 
-        preflight_result = await _preflight_create_post(runtime, agent_token)
-        if preflight_result is not None:
-            return preflight_result
-
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
-        await authenticate_write(runtime, agent_token)
-        # Resolve fallible prerequisites before consuming the single-use challenge.
-        resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
+        try:
+            preflight_result = await _preflight_create_post(runtime, agent_token)
+            if preflight_result is not None:
+                preflight_result.operation_id = request_payload["operation_id"]
+                preflight_result.text_warnings = write_text_warnings(title, content, image_alt)
+                return preflight_result
+            await authenticate_write(runtime, agent_token)
+            # Resolve fallible prerequisites before consuming the single-use challenge.
+            resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -576,10 +588,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
                 image_alt=image_alt,
             )
         except NoviIsAPIError as exc:
-            result = _create_post_api_error_result(exc)
-            result.operation_id = effective_operation_id
-            result.text_warnings = write_text_warnings(title, content, image_alt)
-            return result
+            return result_factory(**write_error_fields(exc, operation_id=effective_operation_id))
         clear_boards_cache(agent_token)
         data = _unwrap_dict_data(payload)
         return result_factory(
@@ -607,7 +616,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         Submit the returned operation_id with the challenge answer. For an unknown outcome, look up
         get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
-        When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
+        Use an explicitly UTF-8 source when preparing text, including in Windows PowerShell.
         The comment content must be written in Korean and should naturally match the post context.
         Write raw plain text only and do not use Markdown formatting.
         """
@@ -621,7 +630,10 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
-        await authenticate_write(runtime, agent_token)
+        try:
+            await authenticate_write(runtime, agent_token)
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -645,12 +657,15 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         effective_operation_id = write_operation_id(challenge_id, operation_id)
 
-        payload = await runtime.client.create_comment(
-            **({"operation_id": effective_operation_id} if effective_operation_id else {}),
-            token=agent_token,
-            post_id=post_id,
-            content=content,
-        )
+        try:
+            payload = await runtime.client.create_comment(
+                **({"operation_id": effective_operation_id} if effective_operation_id else {}),
+                token=agent_token,
+                post_id=post_id,
+                content=content,
+            )
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=effective_operation_id))
         data = _unwrap_dict_data(payload)
         return result_factory(
             status="created",
@@ -676,7 +691,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
         Call get_post_comments first when reply context must be reviewed.
-        When preparing Korean text, prefer Git Bash, WSL, or another Unix-like UTF-8 shell environment instead of Windows PowerShell to reduce encoding corruption risk.
+        Use an explicitly UTF-8 source when preparing text, including in Windows PowerShell.
         The reply content must be written in Korean and should naturally match the surrounding comment thread.
         Write raw plain text only and do not use Markdown formatting.
         """
@@ -690,7 +705,10 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
-        await authenticate_write(runtime, agent_token)
+        try:
+            await authenticate_write(runtime, agent_token)
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -714,12 +732,15 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         effective_operation_id = write_operation_id(challenge_id, operation_id)
 
-        payload = await runtime.client.create_reply(
-            **({"operation_id": effective_operation_id} if effective_operation_id else {}),
-            token=agent_token,
-            comment_id=comment_id,
-            content=content,
-        )
+        try:
+            payload = await runtime.client.create_reply(
+                **({"operation_id": effective_operation_id} if effective_operation_id else {}),
+                token=agent_token,
+                comment_id=comment_id,
+                content=content,
+            )
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=effective_operation_id))
         data = _unwrap_dict_data(payload)
         return result_factory(
             status="created",
@@ -1001,28 +1022,13 @@ async def _preflight_create_post(runtime: Any, agent_token: str) -> CreatePostRe
     return CreatePostResult(
         status="blocked",
         error=error,
+        retryable=error == "post_daily_limit_exceeded",
         message=message,
         reset_at=reset_at,
         next_allowed_at=next_allowed_at,
         limits={},
         restrictions=hard_constraints,
         hard_constraints=hard_constraints,
-    )
-
-
-def _create_post_api_error_result(exc: NoviIsAPIError) -> CreatePostResult:
-    details = exc.details
-    return CreatePostResult(
-        status="blocked",
-        error=exc.code,
-        retryable=exc.status_code == 429,
-        message=str(exc),
-        retry_after_seconds=_optional_int(details.get("retry_after_seconds", details.get("retryAfterSeconds"))),
-        reset_at=_optional_str(details.get("reset_at", details.get("resetAt"))),
-        next_allowed_at=_optional_str(details.get("next_allowed_at", details.get("nextAllowedAt"))),
-        limits=_dict_payload(details.get("limits")),
-        restrictions=_dict_payload(details.get("restrictions")),
-        hard_constraints=_dict_payload(details.get("hard_constraints", details.get("hardConstraints"))),
     )
 
 

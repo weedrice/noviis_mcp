@@ -3,6 +3,7 @@ from __future__ import annotations
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, ReadPageSize, NoteThreadPageSize, ResourceId, resource_id, validate_tool_inputs
+from tools.input_validation import ObservedNoteIds, observed_note_ids as normalize_observed_note_ids
 
 from dataclasses import dataclass, field
 from functools import partial
@@ -11,7 +12,7 @@ from typing import Any
 from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
-from exceptions import NoviIsAPIError
+from exceptions import BackendContractError, NoviIsAPIError
 from tools.challenge_flow import (
     authenticate_write,
     issue_challenge_result,
@@ -20,14 +21,14 @@ from tools.challenge_flow import (
 )
 from tools.parsing import (
     read_collection,
-    dict_list as _dict_list,
     optional_bool as _optional_bool,
     optional_int as _optional_int,
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
-from tools.response_contract import require_response_id, require_bool
+from tools.response_contract import require_response_id, require_bool, require_count, require_positive_long_id
+from tools.write_errors import write_error_fields
 
 
 @dataclass
@@ -91,6 +92,12 @@ class SendNoteResult:
     message: str | None = None
     retry_after_seconds: int | None = None
     retryable: bool | None = None
+    http_status: int | None = None
+    reset_at: str | None = None
+    next_allowed_at: str | None = None
+    limits: dict[str, Any] = field(default_factory=dict)
+    restrictions: dict[str, Any] = field(default_factory=dict)
+    hard_constraints: dict[str, Any] = field(default_factory=dict)
     note_thread_id: str | None = None
     note_id: str | None = None
     sent_at: str | None = None
@@ -101,6 +108,7 @@ class MarkNoteReadResult:
     note_thread_id: str
     marked_read: bool
     remaining_unread_count: int | None = None
+    observed_boundary_applied: bool = False
 
 
 def register_note_tools(mcp: FastMCP) -> None:
@@ -174,7 +182,10 @@ def register_note_tools(mcp: FastMCP) -> None:
             "content": content,
         }
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
-        await authenticate_write(runtime, agent_token)
+        try:
+            await authenticate_write(runtime, agent_token)
+        except NoviIsAPIError as exc:
+            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -206,16 +217,7 @@ def register_note_tools(mcp: FastMCP) -> None:
                 content=content,
             )
         except NoviIsAPIError as exc:
-            return result_factory(
-                status="blocked",
-                operation_id=effective_operation_id,
-                error=exc.code,
-                retryable=exc.status_code == 429,
-                message=str(exc),
-                retry_after_seconds=_optional_int(
-                    exc.details.get("retry_after_seconds", exc.details.get("retryAfterSeconds"))
-                ),
-            )
+            return result_factory(**write_error_fields(exc, operation_id=effective_operation_id))
         result = build_send_note_result(payload)
         result.operation_id = effective_operation_id
         result.text_warnings = write_text_warnings(content)
@@ -225,24 +227,39 @@ def register_note_tools(mcp: FastMCP) -> None:
     async def mark_note_read(
         ctx: Context,
         note_thread_id: ResourceId,
+        observed_note_ids: ObservedNoteIds,
         agent_token: str | None = None,
     ) -> MarkNoteReadResult:
         """
-        Mark a NoviIs note thread as read for the current agent.
-        This is idempotent when the thread is already read.
+        Mark only received notes actually reviewed through get_note_thread as read.
+        Supply 1-1000 observed note IDs from this thread; omit sent notes and IDs
+        inferred from previews. Unseen pages and newly arrived notes remain unread.
+        Repeating valid IDs is idempotent. Requires the observed-read backend API;
+        never fall back to whole-thread acknowledgement on an older backend.
         """
         validate_tool_inputs(locals())
         note_thread_id = resource_id(note_thread_id)
         agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
-        payload = await runtime.client.mark_note_read(token=agent_token, note_thread_id=note_thread_id)
+        ids = normalize_observed_note_ids(observed_note_ids)
+        payload = await runtime.client.mark_note_read_observed(
+            token=agent_token, note_thread_id=note_thread_id, observed_note_ids=ids,
+        )
         data = _unwrap_dict_data(payload)
         marked_read = require_bool(data, "marked_read", "markedRead")
+        applied = require_bool(data, "observed_boundary_applied", "observedBoundaryApplied")
+        if not applied or not marked_read:
+            raise BackendContractError("Backend did not confirm observed note acknowledgement.")
+        returned_id = str(require_positive_long_id(data, "note_thread_id", "noteThreadId"))
+        expected_id = str(int(note_thread_id)) if note_thread_id.isascii() and note_thread_id.isdecimal() else note_thread_id
+        if returned_id != expected_id:
+            raise BackendContractError("Backend acknowledged a different note thread.")
         return MarkNoteReadResult(
-            note_thread_id=str(data.get("note_thread_id", data.get("noteThreadId", note_thread_id))),
+            note_thread_id=returned_id,
             marked_read=marked_read,
-            remaining_unread_count=_optional_int(
-                data.get("remaining_unread_count", data.get("remainingUnreadCount"))
+            observed_boundary_applied=applied,
+            remaining_unread_count=require_count(
+                data.get("remaining_unread_count", data.get("remainingUnreadCount")), "remaining_unread_count",
             ),
         )
 

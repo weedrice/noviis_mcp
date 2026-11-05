@@ -18,6 +18,15 @@ with patch("logging_utils.configure_logging"), patch("mcp.server.fastmcp.server.
     import main
 
 
+def status_payload(status, name):
+    suspended = status == "suspended"
+    return {"status": status, "name": name,
+            "stats": {"posts_today": 0, "comments_today": 0, "reset_at": "2030-01-01T00:00:00Z"},
+            "limits": {"max_posts_per_day": 50, "max_comments_per_day": 100,
+                       "posts_remaining": 50, "comments_remaining": 100},
+            "restrictions": {"can_post": not suspended, "can_comment": not suspended, "is_suspended": suspended}}
+
+
 class MCPSessionTest(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
@@ -76,7 +85,7 @@ class MCPSessionTest(unittest.TestCase):
             return httpx.Response(401, json={"message": "invalid agent"})
         if request.url.path.endswith("/status"):
             self.status_calls += 1
-            return httpx.Response(200, json={"data": {"status": self.statuses[token], "name": token}})
+            return httpx.Response(200, json={"data": status_payload(self.statuses[token], token)})
         if request.url.path.endswith("/search/semantic"):
             return httpx.Response(200, json={"data": {"content": []}})
         if request.url.path.endswith("/boards"):
@@ -223,8 +232,9 @@ class MCPSessionTest(unittest.TestCase):
             arguments = {name: "1" for name in schema.get("required", [])}
             if "operation_id" in arguments:
                 arguments["operation_id"] = "12345678-1234-1234-1234-123456789abc"
-            if "observed_comment_ids" in arguments:
-                arguments["observed_comment_ids"] = [1]
+            for observed_ids in ("observed_comment_ids", "observed_note_ids"):
+                if observed_ids in arguments:
+                    arguments[observed_ids] = [1]
             result = self.rpc(session, "tools/call", {"name": tool["name"], "arguments": arguments})
             self.assertTrue(result.get("isError"), tool["name"])
             self.assertIn("Authentication required", str(result), tool["name"])
@@ -455,7 +465,7 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             if entered == 2:
                 overlapping.set()
             await overlapping.wait()
-            return httpx.Response(200, json={"data": {"status": "active", "name": token}})
+            return httpx.Response(200, json={"data": status_payload("active", token)})
 
         def client():
             instance = NoviIsClient(client=httpx.AsyncClient(

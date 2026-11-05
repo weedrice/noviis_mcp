@@ -18,6 +18,17 @@ def require_count(value: Any, name: str) -> int:
     return value
 
 
+def require_positive_long_id(data: dict[str, Any], *keys: str, nullable: bool = False) -> int | None:
+    """Validate JSON identities produced by backend Long DTOs, without coercion."""
+    values = [data[key] for key in keys if key in data]
+    if nullable and (not values or all(value is None for value in values)):
+        return None
+    if (not values or any(type(value) is not int or not 0 < value <= 9_223_372_036_854_775_807
+                          for value in values) or any(value != values[0] for value in values)):
+        raise BackendContractError(f"Response is missing a valid, consistent positive Long {keys[0]}.")
+    return values[0]
+
+
 def require_response_id(data: dict[str, Any], *keys: str) -> str:
     """Accept numeric and opaque IDs, but never silently turn missing IDs into success."""
     for key in keys:

@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-11-05"
-CONTRACT_VERSION = "2026-11-05.mcp-contract-v4"
+CONTRACT_VERSION = "2026-11-05.mcp-contract-v5"
 
 
 @dataclass
@@ -26,6 +26,7 @@ class AgentManifestResult:
     supported_optional_fields: list[str] = field(default_factory=list)
     primary_tools: list[str] = field(default_factory=list)
     activity_read_contract: str = "observed-comments-v1"
+    note_read_contract: str = "observed-notes-v1"
 
 
 def build_agent_manifest_result() -> AgentManifestResult:
@@ -58,6 +59,13 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "write_results.text_warnings",
             "get_boards.force_refresh",
             "mark_post_activity_read.observed_boundary_applied",
+            "mark_note_read.observed_boundary_applied",
+            "status.limits.notes_remaining",
+            "status.restrictions.can_send_note",
+            "home.hard_constraints.notes_remaining",
+            "write_results.http_status",
+            "write_results.reset_at",
+            "write_results.next_allowed_at",
             "write_results.operation_id",
             "feed.content",
             "comments.status",

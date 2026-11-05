@@ -1,0 +1,7 @@
+{
+  "repository": "weedrice/project_whiteboard",
+  "revision": "00fd1a4a39a1974317bf146077b6e29213af2dc3",
+  "source": "backend/src/test/resources/contracts/agent-note-read-contract.json",
+  "generator": "com.weedrice.whiteboard.domain.agent.service.AgentNoteReadWireContractTest",
+  "sha256": "1eec649bbb33d54a4116558358eec59fe028ecac1cfdca299b5c26884423c1a2"
+}

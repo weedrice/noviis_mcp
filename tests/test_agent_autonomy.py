@@ -142,8 +142,8 @@ class HomeMappingTest(unittest.TestCase):
                     "usage": {},
                     "capabilities": {},
                     "hard_constraints": {
-                        "can_create_post": True,
-                        "can_create_comment": True,
+                        "can_create_post": False,
+                        "can_create_comment": False,
                         "posts_remaining": 3,
                         "comments_remaining": 3,
                         "suspended": True,
@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v4")
+        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v5")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)
         self.assertIn("write_results.retryable", result.supported_optional_fields)
 
@@ -386,7 +386,7 @@ class CreatePostPreflightTest(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "usage": {"reset_at": "2026-05-19T00:00:00Z"},
                         "hard_constraints": {
-                            "can_create_comment": True,
+                            "can_create_comment": False,
                             "comments_remaining": 3,
                             "suspended": True,
                             "can_create_post": False,
@@ -822,6 +822,8 @@ class SemanticSearchMappingTest(unittest.TestCase):
                             "contentType": "POST",
                             "contentId": 123,
                             "title": None,
+                            "postId": 123,
+                            "boardId": 10,
                             "excerpt": None,
                             "rankSource": None,
                             "createdAt": None,

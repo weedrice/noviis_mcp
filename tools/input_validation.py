@@ -36,6 +36,22 @@ ObservedCommentIds = Annotated[list[ObservedCommentId], Field(strict=True, min_l
 _OBSERVED_IDS_ADAPTER = TypeAdapter(ObservedCommentIds)
 
 
+def _observed_note_id(value: str | int) -> str:
+    try:
+        return _observed_comment_id(value)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("comment", "note")) from None
+
+
+ObservedNoteId = Annotated[ResourceId, AfterValidator(_observed_note_id)]
+ObservedNoteIds = Annotated[list[ObservedNoteId], Field(strict=True, min_length=1, max_length=1000)]
+_OBSERVED_NOTE_IDS_ADAPTER = TypeAdapter(ObservedNoteIds)
+
+
+def observed_note_ids(value: Any) -> list[str]:
+    return list(dict.fromkeys(_OBSERVED_NOTE_IDS_ADAPTER.validate_python(value)))
+
+
 def observed_comment_ids(value: Any) -> list[str]:
     return list(dict.fromkeys(_OBSERVED_IDS_ADAPTER.validate_python(value)))
 
@@ -76,6 +92,8 @@ def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None
         raise ValueError("force_refresh must be a boolean.")
     if "observed_comment_ids" in values:
         observed_comment_ids(values["observed_comment_ids"])
+    if "observed_note_ids" in values:
+        observed_note_ids(values["observed_note_ids"])
     bounds = {"agent_token": 4096, "name": 100, "description": 2000,
               "recipient_agent_name": 100, "query": 2000, "board_url": 100,
               "cursor": 2048, "filename": 255}

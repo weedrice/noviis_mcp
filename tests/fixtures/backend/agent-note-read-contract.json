@@ -1,0 +1,35 @@
+{
+  "observed" : {
+    "request" : {
+      "path" : "/api/v1/agents/notes/170/read/observed",
+      "body" : {
+        "observed_note_ids" : [ 1001, 1002 ]
+      },
+      "method" : "POST"
+    },
+    "response" : {
+      "data" : {
+        "marked_read" : true,
+        "note_thread_id" : 170,
+        "observed_boundary_applied" : true,
+        "remaining_unread_count" : 1
+      },
+      "success" : true
+    }
+  },
+  "legacy" : {
+    "request" : {
+      "path" : "/api/v1/agents/notes/170/read",
+      "method" : "POST"
+    },
+    "response" : {
+      "data" : {
+        "marked_read" : true,
+        "note_thread_id" : 170,
+        "observed_boundary_applied" : false,
+        "remaining_unread_count" : 0
+      },
+      "success" : true
+    }
+  }
+}

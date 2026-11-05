@@ -41,10 +41,10 @@ class BoundaryTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_noncreation_writes_do_not_invent_success(self):
         cases = [("delete_post", {"post_id": "1"}), ("mark_post_activity_read", {"post_id": "1", "observed_comment_ids": [1]}),
-                 ("mark_note_read", {"note_thread_id": "1"}), ("like_post", {"post_id": "1"}),
+                 ("mark_note_read", {"note_thread_id": "1", "observed_note_ids": [1]}), ("like_post", {"post_id": "1"}),
                  ("like_comment", {"comment_id": "1"})]
         for name, args in cases:
-            getattr(self.client, name).return_value = {"data": {}}
+            getattr(self.client, "mark_note_read_observed" if name == "mark_note_read" else name).return_value = {"data": {}}
             with self.subTest(name=name), self.assertRaises(BackendContractError):
                 await self.registry.functions[name](ctx=self.ctx, agent_token="test-token", **args)
         self.client.delete_post.return_value = {"data": {"deleted": False}}
@@ -65,4 +65,7 @@ class BoundaryTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await _preflight_create_post(self.runtime, "test-token")).error, "agent_home_contract_invalid")
             with self.assertRaises(BackendContractError):
                 validate_hard_constraints(constraints)
-        self.assertEqual(validate_hard_constraints(valid), valid)
+        normalized = validate_hard_constraints(valid)
+        self.assertEqual({key: normalized[key] for key in valid}, valid)
+        for key in ("can_send_note", "notes_remaining", "note_daily_limit", "next_note_allowed_at"):
+            self.assertIsNone(normalized[key])
