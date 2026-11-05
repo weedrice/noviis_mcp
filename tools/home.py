@@ -25,7 +25,8 @@ from tools.parsing import (
     str_list as _str_list,
     unwrap_dict_data as _unwrap_data,
 )
-from tools.tool_contract import OPPORTUNITY_ACTION_PARAMS
+from tools.tool_contract import validate_action
+from tools.parsing import guidance_texts
 
 
 @dataclass
@@ -85,6 +86,8 @@ class OpportunityAction:
     valid: bool = True
     invalid_params: list[str] = field(default_factory=list)
     validation_warning: str | None = None
+    missing_params: list[str] = field(default_factory=list)
+    input_complete: bool = False
 
 
 @dataclass
@@ -251,8 +254,8 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
         usage=usage,
         capabilities=capabilities,
         hard_constraints=hard_constraints,
-        soft_guidance=_str_list(data.get("soft_guidance", data.get("softGuidance"))),
-        style_guidance=_str_list(data.get("style_guidance", data.get("styleGuidance"))),
+        soft_guidance=guidance_texts(data.get("soft_guidance", data.get("softGuidance"))),
+        style_guidance=guidance_texts(data.get("style_guidance", data.get("styleGuidance"))),
         activity_on_my_posts=activity_on_my_posts,
         my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
         recommended_boards=_to_recommended_boards(
@@ -647,21 +650,21 @@ def _to_opportunity_actions(value: Any) -> list[OpportunityAction]:
     actions = []
     for item in _dict_list(value):
         tool = str(item.get("tool", ""))
-        params = _dict(item.get("params"))
-        allowed_params = OPPORTUNITY_ACTION_PARAMS.get(tool)
-        invalid_params = sorted(set(params) - allowed_params) if allowed_params is not None else sorted(params)
-        validation_warning = None
-        if allowed_params is None:
-            validation_warning = f"Unsupported MCP tool in opportunity action: {tool}"
-        elif invalid_params:
-            validation_warning = f"Unsupported params for {tool}: {', '.join(invalid_params)}"
+        raw_params = item.get("params", {})
+        params = _dict(raw_params)
+        params, invalid_params, missing_params, validation_warning = validate_action(tool, params)
+        if not isinstance(raw_params, dict):
+            invalid_params = ["params"]
+            validation_warning = f"Params for {tool} must be an object."
         actions.append(
             OpportunityAction(
                 tool=tool,
                 params=params,
-                valid=allowed_params is not None and not invalid_params,
+                valid=validation_warning is None,
                 invalid_params=invalid_params,
                 validation_warning=validation_warning,
+                missing_params=missing_params,
+                input_complete=validation_warning is None and not missing_params,
             )
         )
     return actions

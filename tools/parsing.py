@@ -26,6 +26,28 @@ def str_list(value: Any) -> list[str]:
     return [str(item) for item in value]
 
 
+def guidance_texts(value: Any) -> list[str]:
+    """Keep the string-list contract without rendering backend objects as repr."""
+    from exceptions import BackendContractError
+
+    if not isinstance(value, list):
+        raise BackendContractError("Guidance must be a list of strings or text objects.")
+    result = []
+    for item in value:
+        if isinstance(item, str):
+            result.append(item)
+            continue
+        if isinstance(item, dict):
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                text = item.get("description")
+            if isinstance(text, str) and text.strip():
+                result.append(text)
+                continue
+        raise BackendContractError("Guidance entry must provide text or description.")
+    return result
+
+
 def optional_str(value: Any) -> str | None:
     if value is None:
         return None

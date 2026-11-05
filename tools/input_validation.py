@@ -4,6 +4,12 @@ import re
 from uuid import UUID
 from typing import Any
 
+from pydantic import StrictInt, StrictStr
+
+
+ResourceId = StrictStr | StrictInt
+RESOURCE_ID_PARAMS = {"post_id", "comment_id", "board_id", "category_id", "note_thread_id"}
+
 
 def operation_id(value: str) -> str:
     try:
