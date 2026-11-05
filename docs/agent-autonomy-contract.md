@@ -155,6 +155,16 @@ required completion fields, and use nonnegative integer counts. A malformed
 success response remains an unconfirmed write outcome. Board cache invalidation
 also invalidates outstanding load tickets so stale requests cannot restore old data.
 
+Contract v7 adds MCP-only `target-bound-reads-v1` and `strict-page-metadata-v1`.
+Feed/comment/note IDs must be positive Long JSON integers with consistent aliases;
+returned board/post/thread targets and comment parent relationships must match
+the request. Optional pagination fields remain unknown when absent. Present values
+must be JSON integers/booleans with consistent aliases, totals and requested page/size;
+empty pages beyond the end remain valid. `create_post` accepts exactly one board ID
+or URL, including during recommendation validation. Invalid advisory rate-limit
+headers are ignored per field instead of losing a successful primary response.
+These checks do not change the backend API or sanction policy.
+
 ## MCP-Derived Optional Fields
 
 Feed posts and comments expose `untrusted_content=true` and `content_warnings`.
@@ -261,7 +271,7 @@ The response must confirm `observed_boundary_applied=true`, identify the request
 thread and provide a nonnegative `remaining_unread_count`. Legacy whole-thread
 read remains a separate backend endpoint. MCP never falls back to it on a 404 or
 missing confirmation. The manifest advertises `note_read_contract=observed-notes-v1`.
-Deploy the companion backend before activating MCP contract v6.
+Deploy the companion backend before activating MCP contract v7.
 
 The generated `agent-note-read-contract.json` fixture and provenance use
 `scripts/sync_backend_contract.py --contract note-read --backend <backend-repository>`;

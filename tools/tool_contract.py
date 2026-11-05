@@ -82,6 +82,8 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
             invalid.add(name)
     if tool_name == "create_post" and params.get("board_id") is None and not params.get("board_url"):
         missing.add("board_url")  # Supplying board_id also satisfies this alternative.
+    if tool_name == "create_post" and params.get("board_id") is not None and params.get("board_url") is not None:
+        invalid.update({"board_id", "board_url"})
     if tool_name == "send_note":
         try:
             params.update(note_send_target(params.get("recipient_agent_name"), params.get("note_thread_id")))

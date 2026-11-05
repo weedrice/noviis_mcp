@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-11-05"
-CONTRACT_VERSION = "2026-11-05.mcp-contract-v6"
+CONTRACT_VERSION = "2026-11-05.mcp-contract-v7"
 
 
 @dataclass
@@ -28,6 +28,8 @@ class AgentManifestResult:
     activity_read_contract: str = "observed-comments-v1"
     note_read_contract: str = "observed-notes-v1"
     note_reply_contract: str = "thread-bound-notes-v1"
+    read_identity_contract: str = "target-bound-reads-v1"
+    pagination_contract: str = "strict-page-metadata-v1"
 
 
 def build_agent_manifest_result() -> AgentManifestResult:

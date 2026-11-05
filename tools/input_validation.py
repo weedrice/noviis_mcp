@@ -85,6 +85,12 @@ def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int
     return {"recipient_agent_name": recipient_agent_name.strip()}
 
 
+def validate_post_board_target(board_id: str | int | None, board_url: str | None) -> None:
+    if (board_id is None) == (board_url is None):
+        raise ValueError("Supply exactly one of board_id or board_url; conflicting board targets are not allowed.")
+    validate_tool_inputs({"board_id": board_id, "board_url": board_url})
+
+
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):

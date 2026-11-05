@@ -27,8 +27,9 @@ from tools.parsing import (
     unwrap_dict_data as _unwrap_dict_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
-from tools.response_contract import require_response_id, require_bool, require_count, require_positive_long_id
+from tools.response_contract import require_response_id, require_bool, require_count, require_positive_long_id, require_target_id
 from tools.write_errors import write_error_fields
+from tools.pagination import read_pagination
 
 
 @dataclass
@@ -128,7 +129,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_notes(token=agent_token, box=box, page=page, size=size)
-        return build_notes_result(payload)
+        return build_notes_result(payload, requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_note_thread(
@@ -152,7 +153,9 @@ def register_note_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return build_note_thread_result(payload)
+        return build_note_thread_result(
+            payload, expected_thread_id=note_thread_id, requested_page=page, requested_size=size,
+        )
 
     @mcp.tool()
     async def send_note(
@@ -272,28 +275,31 @@ def register_note_tools(mcp: FastMCP) -> None:
         )
 
 
-def build_notes_result(payload: dict[str, Any]) -> NotesResult:
+def build_notes_result(
+    payload: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
+) -> NotesResult:
     data, raw_content = read_collection(payload, "content", "notes", "threads")
-    return NotesResult(
-        content=[_to_thread_summary(item) for item in raw_content],
-        page=_optional_int(data.get("page", data.get("number", data.get("pageNumber")))),
-        size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("total_elements", data.get("totalElements"))),
-        total_pages=_optional_int(data.get("total_pages", data.get("totalPages"))),
-        has_next=_optional_bool(data.get("has_next", data.get("hasNext"))),
-    )
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination.pop("is_last")
+    return NotesResult(content=[_to_thread_summary(item) for item in raw_content], **pagination)
 
-def build_note_thread_result(payload: dict[str, Any]) -> NoteThreadResult:
+
+def build_note_thread_result(
+    payload: dict[str, Any], *, expected_thread_id: str | None = None,
+    requested_page: int | None = None, requested_size: int | None = None,
+) -> NoteThreadResult:
     data, raw_notes = read_collection(payload, "notes", "content")
+    thread_id = (
+        require_target_id(data, expected_thread_id, "note_thread_id", "noteThreadId")
+        if expected_thread_id is not None else require_response_id(data, "note_thread_id", "noteThreadId")
+    )
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination.pop("is_last")
     return NoteThreadResult(
-        note_thread_id=str(data.get("note_thread_id", data.get("noteThreadId", ""))),
+        note_thread_id=thread_id,
         counterpart_agent=_to_note_agent(data.get("counterpart_agent", data.get("counterpartAgent"))),
-        notes=[_to_note(item) for item in raw_notes],
-        page=_optional_int(data.get("page", data.get("number", data.get("pageNumber")))),
-        size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("total_elements", data.get("totalElements"))),
-        total_pages=_optional_int(data.get("total_pages", data.get("totalPages"))),
-        has_next=_optional_bool(data.get("has_next", data.get("hasNext"))),
+        notes=[_to_note(item, expected_thread_id=thread_id) for item in raw_notes],
+        **pagination,
     )
 
 
@@ -308,9 +314,10 @@ def build_send_note_result(payload: dict[str, Any]) -> SendNoteResult:
 
 
 def _to_thread_summary(item: dict[str, Any]) -> NoteThreadSummary:
+    latest_id = require_positive_long_id(item, "latest_note_id", "latestNoteId", nullable=True)
     return NoteThreadSummary(
-        note_thread_id=str(item.get("note_thread_id", item.get("noteThreadId", item.get("id", "")))),
-        latest_note_id=_optional_str(item.get("latest_note_id", item.get("latestNoteId"))),
+        note_thread_id=require_response_id(item, "note_thread_id", "noteThreadId", "id"),
+        latest_note_id=None if latest_id is None else str(latest_id),
         counterpart_agent=_to_note_agent(item.get("counterpart_agent", item.get("counterpartAgent"))),
         preview=str(item.get("preview", "")),
         unread_count=_optional_int(item.get("unread_count", item.get("unreadCount")), 0) or 0,
@@ -333,9 +340,11 @@ def _to_note_agent(value: Any) -> NoteAgent | None:
     )
 
 
-def _to_note(item: dict[str, Any]) -> Note:
+def _to_note(item: dict[str, Any], *, expected_thread_id: str) -> Note:
+    if "note_thread_id" in item or "noteThreadId" in item:
+        require_target_id(item, expected_thread_id, "note_thread_id", "noteThreadId")
     return Note(
-        note_id=str(item.get("note_id", item.get("noteId", item.get("id", "")))),
+        note_id=require_response_id(item, "note_id", "noteId", "id"),
         sender_agent_name=str(item.get("sender_agent_name", item.get("senderAgentName", ""))),
         content=str(item.get("content", "")),
         created_at=str(item.get("created_at", item.get("createdAt", ""))),

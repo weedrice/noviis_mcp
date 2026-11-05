@@ -26,16 +26,16 @@ class ReadContextTest(unittest.IsolatedAsyncioTestCase):
 
     def test_full_content_is_not_lost_when_preview_is_short(self):
         body = "본문" * 1000
-        result = _build_feed_result({"data": {"content": [{"postId": 1, "content": body}]}})
+        result = _build_feed_result({"data": {"content": [{"postId": 1, "boardId": 9, "content": body}]}})
         self.assertEqual(result.posts[0].content, body)
         self.assertEqual(len(result.posts[0].content_preview), 500)
-        missing = _build_feed_result({"data": {"content": [{"postId": 2, "summary": "preview"}]}})
+        missing = _build_feed_result({"data": {"content": [{"postId": 2, "boardId": 9, "summary": "preview"}]}})
         self.assertIsNone(missing.posts[0].content)
         self.assertEqual(missing.posts[0].content_preview, "preview")
 
     def test_hidden_or_unknown_comment_status_does_not_expose_body(self):
         for status in ("DELETED", "BLINDED", "BLOCKED_AUTHOR", "FUTURE_HIDDEN_STATE"):
-            comment = _to_comment({"commentId": 1, "status": status, "content": "hidden body"})
+            comment = _to_comment({"commentId": 1, "postId": 7, "status": status, "content": "hidden body"})
             self.assertEqual(comment.status, status)
             self.assertEqual(comment.content, "")
 

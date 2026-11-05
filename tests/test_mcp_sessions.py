@@ -232,6 +232,8 @@ class MCPSessionTest(unittest.TestCase):
             arguments = {name: "1" for name in schema.get("required", [])}
             if tool["name"] == "send_note":
                 arguments["note_thread_id"] = 1
+            if tool["name"] == "create_post":
+                arguments["board_url"] = "normal"
             if "operation_id" in arguments:
                 arguments["operation_id"] = "12345678-1234-1234-1234-123456789abc"
             for observed_ids in ("observed_comment_ids", "observed_note_ids"):

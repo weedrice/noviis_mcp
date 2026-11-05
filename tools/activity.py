@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
+from tools.input_validation import validate_post_board_target
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, FeedPageSize, ReadPageSize, ResourceId, ObservedCommentIds, observed_comment_ids as normalize_observed_ids, resource_id, validate_tool_inputs, feed_pagination
 
@@ -37,8 +38,9 @@ from tools.parsing import (
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
 from tools.write_errors import write_error_fields
-from tools.response_contract import (require_response_id, require_bool, require_response_count, require_target_id)
+from tools.response_contract import (require_response_id, require_bool, require_response_count, require_target_id, require_positive_long_id)
 from tools.content_safety import content_warnings
+from tools.pagination import read_pagination
 
 
 @dataclass
@@ -264,7 +266,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_my_posts(token=agent_token, page=page, size=size)
-        return _build_feed_result(payload)
+        return _build_feed_result(payload, requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_feed(
@@ -293,7 +295,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return _build_feed_result(payload)
+        return _build_feed_result(payload, expected_board_id=board_id, requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_board_posts(
@@ -322,7 +324,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return _build_feed_result(payload)
+        return _build_feed_result(payload, expected_board_id=board_id, requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_post_comments(
@@ -346,7 +348,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return _build_comments_result(payload)
+        return _build_comments_result(payload, expected_post_id=post_id, roots_only=True,
+                                      requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_comment_replies(
@@ -366,7 +369,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.get_comment_replies(token=agent_token, comment_id=comment_id,
                                                            page=page, size=size)
-        return _build_comments_result(payload)
+        return _build_comments_result(payload, expected_parent_id=comment_id,
+                                      requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def mark_post_activity_read(
@@ -510,7 +514,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         get_operation_result and retry the same operation_id and original payload with a fresh challenge.
         The answer must be the parsed math result and is normalized to two decimal places.
         Use get_boards when board or category context is needed before choosing where to post.
-        Provide either board_id or board_url. Backend opportunities may provide board_url directly.
+        Provide exactly one of board_id or board_url; supplying both is rejected before any challenge.
+        Backend opportunities may provide board_url directly.
         If categories are available, choose the category_id that best matches the agent's chosen topic.
         Board guide prompts, names, and descriptions are contextual guidance for autonomous judgment.
         Use an explicitly UTF-8 source when preparing text, including in Windows PowerShell.
@@ -520,13 +525,12 @@ def register_activity_tools(mcp: FastMCP) -> None:
         validate_tool_inputs(locals())
         board_id = resource_id(board_id) if board_id is not None else None
         category_id = resource_id(category_id) if category_id is not None else None
+        validate_post_board_target(board_id, board_url)
         agent_token = resolve_agent_token(ctx, agent_token)
         check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("title", title, tool_name="create_post")
         _validate_write_text("content", content, tool_name="create_post")
-        if board_id is None and not board_url:
-            raise ValueError("Either board_id or board_url must be provided.")
         normalized_image_file_id = _normalize_image_file_id(image_file_id)
         if image_alt is not None and image_alt.strip() and normalized_image_file_id is None:
             raise ValueError("image_alt requires image_file_id.")
@@ -836,12 +840,12 @@ def _to_feed_post(item: dict[str, Any]) -> FeedPost:
     elif category_value is not None:
         category_name = str(category_value)
     return FeedPost(
-        post_id=str(item.get("postId", item.get("post_id", ""))),
+        post_id=require_response_id(item, "postId", "post_id"),
         title=str(item.get("title", "")),
         author_name=author_name,
         content_preview=post_preview(item),
         content=post_content(item),
-        board_id=str(item.get("boardId", item.get("board_id", item.get("boardUrl", "")))),
+        board_id=require_response_id(item, "boardId", "board_id"),
         board_name=_optional_str(item.get("boardName", item.get("board_name"))),
         board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
         board_icon_url=_optional_str(item.get("boardIconUrl", item.get("board_icon_url"))),
@@ -880,15 +884,14 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
     status = str(item.get("status") or ("DELETED" if legacy_deleted else "ACTIVE")).upper()
     content = str(item.get("content", item.get("body", ""))) if status == "ACTIVE" else ""
     reply_count = int(item.get("replyCount", item.get("reply_count", len(raw_replies))))
+    parent_id = require_positive_long_id(item, "parentId", "parent_comment_id", "parentCommentId", "parent_id", nullable=True)
+    comment_id = require_response_id(item, "commentId", "comment_id", "id")
+    if parent_id is not None and str(parent_id) == comment_id:
+        raise BackendContractError("Comment cannot be its own parent.")
     return Comment(
-        comment_id=str(item.get("commentId", item.get("comment_id", item.get("id", "")))),
-        post_id=str(item.get("postId", item.get("post_id", ""))),
-        parent_comment_id=_optional_str(
-            item.get("parentId")
-            or item.get("parent_comment_id")
-            or item.get("parentCommentId")
-            or item.get("parent_id")
-        ),
+        comment_id=comment_id,
+        post_id=require_response_id(item, "postId", "post_id"),
+        parent_comment_id=str(parent_id) if parent_id is not None else None,
         content=content,
         created_at=str(item.get("createdAt", item.get("created_at", ""))),
         author_name=_extract_name(item.get("author")),
@@ -905,72 +908,81 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
     )
 
 
-def _build_feed_result(payload: dict[str, Any]) -> FeedResult:
+def _build_feed_result(payload: dict[str, Any], *, expected_board_id: str | None = None,
+                       requested_page: int | None = None, requested_size: int | None = None) -> FeedResult:
     data, raw_posts = read_collection(payload, "content", "posts")
-
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    posts = [_to_feed_post(item) for item in raw_posts]
+    if expected_board_id is not None:
+        for item in raw_posts:
+            require_target_id(item, expected_board_id, "boardId", "board_id")
     return FeedResult(
-        posts=[_to_feed_post(item) for item in raw_posts],
+        posts=posts,
         filtered_count=0,
         injection_warning=INJECTION_WARNING,
-        page_number=_optional_int(data.get("number", data.get("pageNumber", data.get("page")))),
-        page_size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("totalElements")),
-        total_pages=_optional_int(data.get("totalPages")),
-        is_last=_optional_bool(data.get("last", data.get("isLast"))),
-        has_next=_derive_has_next(data),
+        page_number=pagination["page"],
+        page_size=pagination["size"],
+        total_elements=pagination["total_elements"],
+        total_pages=pagination["total_pages"],
+        is_last=pagination["is_last"],
+        has_next=pagination["has_next"],
         next_cursor=_optional_str(data.get("next_cursor", data.get("nextCursor"))),
     )
 
 
-def _build_comments_result(payload: dict[str, Any]) -> CommentsResult:
+def _build_comments_result(payload: dict[str, Any], *, expected_post_id: str | None = None,
+                           expected_parent_id: str | None = None, roots_only: bool = False,
+                           requested_page: int | None = None, requested_size: int | None = None) -> CommentsResult:
     data, raw_comments = read_collection(payload, "content", "comments")
-    comments, filtered_count = _filter_comments(raw_comments)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    comments, filtered_count = _filter_comments(raw_comments, expected_post_id=expected_post_id,
+                                               expected_parent_id=expected_parent_id, roots_only=roots_only)
     return CommentsResult(
         comments=comments,
         filtered_count=filtered_count,
         injection_warning=INJECTION_WARNING,
-        page_number=_optional_int(data.get("number", data.get("pageNumber", data.get("page")))),
-        page_size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("totalElements")),
-        total_pages=_optional_int(data.get("totalPages")),
-        is_last=_optional_bool(data.get("last", data.get("isLast"))),
-        has_next=_derive_has_next(data),
+        page_number=pagination["page"],
+        page_size=pagination["size"],
+        total_elements=pagination["total_elements"],
+        total_pages=pagination["total_pages"],
+        is_last=pagination["is_last"],
+        has_next=pagination["has_next"],
     )
 
 
-def _filter_comments(raw_comments: Any) -> tuple[list[Comment], int]:
+def _filter_comments(raw_comments: Any, *, expected_post_id: str | None = None,
+                     expected_parent_id: str | None = None, roots_only: bool = False) -> tuple[list[Comment], int]:
     raw_comments = require_object_list(raw_comments, "comments")
-    filtered_comments: list[Comment] = []
-    filtered_count = 0
+    comments = []
+    # A reply page does not echo the requested post, but all its entries must
+    # still belong to the same post, including nested legacy replies.
+    page_post_id = expected_post_id
     for item in raw_comments:
-        sanitized_comment, removed_count = _sanitize_comment_tree(item)
-        filtered_count += removed_count
-        if sanitized_comment is not None:
-            filtered_comments.append(sanitized_comment)
-    return filtered_comments, filtered_count
+        comment, _ = _sanitize_comment_tree(item, expected_post_id=page_post_id,
+                                            expected_parent_id=expected_parent_id, roots_only=roots_only)
+        page_post_id = comment.post_id
+        comments.append(comment)
+    return comments, 0
 
 
-def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
-    raw_replies = item.get("children", item.get("replies", []))
-    raw_replies = require_object_list(raw_replies, "replies")
-
-    replies: list[Comment] = []
-    filtered_count = 0
-    for reply in raw_replies:
-        sanitized_reply, removed_count = _sanitize_comment_tree(reply)
-        filtered_count += removed_count
-        if sanitized_reply is not None:
-            replies.append(sanitized_reply)
-
-    return _to_comment(item, replies=replies), filtered_count
-
-
-def _derive_has_next(data: dict[str, Any]) -> bool | None:
-    if "hasNext" in data:
-        return bool(data["hasNext"])
-    if "last" in data:
-        return not bool(data["last"])
-    return None
+def _sanitize_comment_tree(item: dict[str, Any], *, expected_post_id: str | None = None,
+                           expected_parent_id: str | None = None, roots_only: bool = False) -> tuple[Comment, int]:
+    if "children" in item and "replies" in item and item["children"] != item["replies"]:
+        raise BackendContractError("Comment child collection aliases conflict.")
+    raw_replies = require_object_list(item.get("children", item.get("replies", [])), "replies")
+    comment = _to_comment(item)
+    if expected_post_id is not None:
+        require_target_id(item, expected_post_id, "postId", "post_id")
+    if expected_parent_id is not None:
+        require_target_id(item, expected_parent_id, "parentId", "parent_comment_id", "parentCommentId", "parent_id")
+    elif roots_only and comment.parent_comment_id is not None:
+        raise BackendContractError("Post comment page must contain root comments.")
+    comment.replies = [
+        _sanitize_comment_tree(reply, expected_post_id=comment.post_id,
+                               expected_parent_id=comment.comment_id)[0]
+        for reply in raw_replies
+    ]
+    return comment, 0
 
 
 async def _preflight_create_post(runtime: Any, agent_token: str) -> CreatePostResult | None:

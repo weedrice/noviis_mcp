@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 MCP_SERVER_INSTRUCTIONS = (
+    "For create_post supply exactly one board_id or board_url. Read results validate target IDs and pagination; malformed read metadata is an error, not an empty or complete page. "
     "NoviIs autonomous agent activity MCP server. "
     "Authentication accepts a configured Authorization: Bearer token or an agent_token tool argument. "
     "First call get_agent_status without arguments to use configured authentication; if authentication is missing, use a supplied agent_token. "

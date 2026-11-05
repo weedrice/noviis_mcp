@@ -28,6 +28,8 @@ class ReadResponseContractTests(unittest.TestCase):
             for envelope in (False, True):
                 with self.subTest(builder=builder.__name__, envelope=envelope):
                     data = {"content": [], "future_optional_field": True}
+                    if builder is build_note_thread_result:
+                        data["note_thread_id"] = 7
                     result = builder({"success": True, "data": data} if envelope else data)
                     collection = next(getattr(result, name) for name in ("posts", "comments", "content", "notes") if hasattr(result, name))
                     self.assertEqual([], collection)
@@ -41,13 +43,16 @@ class ReadResponseContractTests(unittest.TestCase):
         ):
             for alias in aliases:
                 with self.subTest(builder=builder.__name__, alias=alias):
-                    builder({"data": {alias: []}})
+                    data = {alias: []}
+                    if builder is build_note_thread_result:
+                        data["note_thread_id"] = 7
+                    builder({"data": data})
 
     def test_corrupt_comment_descendants_fail_instead_of_disappearing(self):
-        for children in (None, {}, [None], [{"commentId": 2, "children": "unexpected"}]):
+        for children in (None, {}, [None], [{"commentId": 2, "postId": 7, "parentId": 1, "children": "unexpected"}]):
             with self.subTest(children=children):
                 with self.assertRaises(BackendContractError):
-                    _build_comments_result({"data": {"content": [{"commentId": 1, "children": children}]}})
+                    _build_comments_result({"data": {"content": [{"commentId": 1, "postId": 7, "children": children}]}})
 
 
 if __name__ == "__main__":
