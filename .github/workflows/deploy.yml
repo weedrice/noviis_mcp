@@ -1,8 +1,8 @@
 name: Verify and Deploy
 
 on:
+  # Validate stacked improvement PRs too; deployment remains main-only.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:

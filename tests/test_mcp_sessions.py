@@ -223,6 +223,8 @@ class MCPSessionTest(unittest.TestCase):
             arguments = {name: "1" for name in schema.get("required", [])}
             if "operation_id" in arguments:
                 arguments["operation_id"] = "12345678-1234-1234-1234-123456789abc"
+            if "observed_comment_ids" in arguments:
+                arguments["observed_comment_ids"] = [1]
             result = self.rpc(session, "tools/call", {"name": tool["name"], "arguments": arguments})
             self.assertTrue(result.get("isError"), tool["name"])
             self.assertIn("Authentication required", str(result), tool["name"])

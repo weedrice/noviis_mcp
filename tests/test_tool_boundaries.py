@@ -40,7 +40,7 @@ class BoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager._owners, {})
 
     async def test_noncreation_writes_do_not_invent_success(self):
-        cases = [("delete_post", {"post_id": "1"}), ("mark_post_activity_read", {"post_id": "1"}),
+        cases = [("delete_post", {"post_id": "1"}), ("mark_post_activity_read", {"post_id": "1", "observed_comment_ids": [1]}),
                  ("mark_note_read", {"note_thread_id": "1"}), ("like_post", {"post_id": "1"}),
                  ("like_comment", {"comment_id": "1"})]
         for name, args in cases:

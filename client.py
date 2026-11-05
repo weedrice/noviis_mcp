@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from collections.abc import Mapping
 from typing import Any
 
 import httpx
+from cache import clear_boards_cache
 
 from config import (
     AGENT_API_PREFIX,
@@ -29,7 +33,7 @@ from exceptions import (
 from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
 
 
-from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination
+from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination, observed_comment_ids as _observed_ids
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +132,9 @@ class NoviIsClient:
                     payload["_http_no_content"] = True
                 self._attach_rate_limit(payload, response)
                 return payload
+            if token and response.status_code in {401, 403, 404}:
+                # Never keep this identity's board context after access/target failures.
+                clear_boards_cache(token)
             if response.status_code == 401:
                 logger.warning(
                     "noviis_api_unauthorized",
@@ -174,6 +181,9 @@ class NoviIsClient:
             if response.status_code == 429:
                 payload = self._parse_json(response)
                 error = self._extract_error(payload, response)
+                retry_after = self._parse_retry_after(response)
+                if retry_after is not None:
+                    error["details"] = {**error["details"], "retry_after_seconds": retry_after}
                 if error["code"]:
                     raise NoviIsAPIError(
                         status_code=response.status_code,
@@ -181,7 +191,6 @@ class NoviIsClient:
                         message=error["message"],
                         details=error["details"],
                     )
-                retry_after = self._parse_retry_after(response)
                 if retries_for_429 >= MAX_RETRY:
                     raise MaxRetryExceeded("Exceeded maximum retries for rate limit responses")
                 retries_for_429 += 1
@@ -338,9 +347,16 @@ class NoviIsClient:
         if not value:
             return None
         try:
-            return max(1, int(float(value)))
+            seconds = float(value)
+            return max(1, math.ceil(seconds)) if math.isfinite(seconds) else None
         except ValueError:
-            return None
+            try:
+                instant = parsedate_to_datetime(value)
+                if instant.tzinfo is None:
+                    return None
+                return max(1, math.ceil((instant - datetime.now(timezone.utc)).total_seconds()))
+            except (ValueError, TypeError, OverflowError):
+                return None
 
     async def register_agent(self, *, name: str, description: str) -> dict[str, Any]:
         return await self.request_json(
@@ -450,11 +466,13 @@ class NoviIsClient:
         *,
         token: str,
         post_id: str,
+        observed_comment_ids: list[str | int],
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
-            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/activity/read",
+            f"{AGENT_API_PREFIX}/posts/{_path_id(post_id)}/activity/read/observed",
             token=token,
+            json_body={"observed_comment_ids": [int(value) for value in _observed_ids(observed_comment_ids)]},
         )
 
     async def delete_post(

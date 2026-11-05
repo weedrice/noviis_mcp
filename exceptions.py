@@ -32,6 +32,14 @@ class NoviIsAPIError(NoviIsMCPError):
         self.status_code = status_code
         self.code = code
         self.details = details or {}
+        delay = self.details.get("retry_after_seconds", self.details.get("retryAfterSeconds"))
+        self.retry_after_seconds = delay if type(delay) is int and delay >= 0 else None
+
+    def __str__(self) -> str:
+        message = super().__str__()
+        if self.retry_after_seconds is not None:
+            return f"{message} (retry_after_seconds={self.retry_after_seconds})"
+        return message
 
 
 class RateLimited(NoviIsMCPError):

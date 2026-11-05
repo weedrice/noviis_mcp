@@ -2,13 +2,34 @@ from __future__ import annotations
 
 import re
 from uuid import UUID
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import StrictInt, StrictStr
+from pydantic import AfterValidator, Field, StrictInt, StrictStr, TypeAdapter
 
 
 ResourceId = StrictStr | StrictInt
+PageNumber = Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
+PageSize = Annotated[int, Field(strict=True, ge=1, le=100)]
+_PAGINATION_ADAPTERS = {"page": TypeAdapter(PageNumber), "size": TypeAdapter(PageSize), "limit": TypeAdapter(PageSize)}
 RESOURCE_ID_PARAMS = {"post_id", "comment_id", "board_id", "category_id", "note_thread_id"}
+
+
+def _observed_comment_id(value: str | int) -> str:
+    if type(value) not in (str, int) or not re.fullmatch(r"[0-9]{1,19}", str(value)):
+        raise ValueError("Observed comment IDs must be positive decimal IDs.")
+    parsed = int(value)
+    if not 0 < parsed <= 9_223_372_036_854_775_807:
+        raise ValueError("Observed comment ID is outside the backend ID range.")
+    return str(parsed)
+
+
+ObservedCommentId = Annotated[ResourceId, AfterValidator(_observed_comment_id)]
+ObservedCommentIds = Annotated[list[ObservedCommentId], Field(strict=True, min_length=1, max_length=1000)]
+_OBSERVED_IDS_ADAPTER = TypeAdapter(ObservedCommentIds)
+
+
+def observed_comment_ids(value: Any) -> list[str]:
+    return list(dict.fromkeys(_OBSERVED_IDS_ADAPTER.validate_python(value)))
 
 
 def operation_id(value: str) -> str:
@@ -37,10 +58,14 @@ def validate_tool_inputs(values: dict[str, Any]) -> None:
             resource_id(values[key])
     if values.get("operation_id") is not None:
         operation_id(values["operation_id"])
-    for key, maximum in {"page": 1_000_000, "size": 100, "limit": 100}.items():
+    for key, adapter in _PAGINATION_ADAPTERS.items():
         value = values.get(key)
-        if value is not None and (type(value) is not int or not (0 if key == "page" else 1) <= value <= maximum):
-            raise ValueError(f"{key} is outside its supported range.")
+        if value is not None:
+            adapter.validate_python(value)
+    if "force_refresh" in values and type(values["force_refresh"]) is not bool:
+        raise ValueError("force_refresh must be a boolean.")
+    if "observed_comment_ids" in values:
+        observed_comment_ids(values["observed_comment_ids"])
     bounds = {"agent_token": 4096, "name": 100, "description": 2000,
               "recipient_agent_name": 100, "query": 2000, "board_url": 200,
               "cursor": 2048, "filename": 255}
