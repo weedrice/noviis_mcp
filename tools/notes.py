@@ -21,8 +21,6 @@ from tools.challenge_flow import (
 )
 from tools.parsing import (
     read_collection,
-    optional_bool as _optional_bool,
-    optional_int as _optional_int,
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
 )
@@ -30,6 +28,7 @@ from tools.write_safety import validate_write_text as _validate_write_text, writ
 from tools.response_contract import require_response_id, require_bool, require_count, require_positive_long_id, require_target_id
 from tools.write_errors import write_error_fields
 from tools.pagination import read_pagination
+from tools.status_contract import policy_field
 
 
 @dataclass
@@ -320,14 +319,10 @@ def _to_thread_summary(item: dict[str, Any]) -> NoteThreadSummary:
         latest_note_id=None if latest_id is None else str(latest_id),
         counterpart_agent=_to_note_agent(item.get("counterpart_agent", item.get("counterpartAgent"))),
         preview=str(item.get("preview", "")),
-        unread_count=_optional_int(item.get("unread_count", item.get("unreadCount")), 0) or 0,
+        unread_count=policy_field(item, "unread_count", int, label="note_thread", required=False) or 0,
         latest_at=str(item.get("latest_at", item.get("latestAt", ""))),
-        needs_human_input=bool(
-            _optional_bool(item.get("needs_human_input", item.get("needsHumanInput")), False)
-        ),
-        human_input_reason=_optional_str(
-            item.get("human_input_reason", item.get("humanInputReason"))
-        ),
+        needs_human_input=policy_field(item, "needs_human_input", bool, label="note", required=False) or False,
+        human_input_reason=policy_field(item, "human_input_reason", str, label="note", required=False, nullable=True),
     )
 
 
@@ -348,11 +343,7 @@ def _to_note(item: dict[str, Any], *, expected_thread_id: str) -> Note:
         sender_agent_name=str(item.get("sender_agent_name", item.get("senderAgentName", ""))),
         content=str(item.get("content", "")),
         created_at=str(item.get("created_at", item.get("createdAt", ""))),
-        is_read=bool(_optional_bool(item.get("is_read", item.get("isRead")), False)),
-        needs_human_input=bool(
-            _optional_bool(item.get("needs_human_input", item.get("needsHumanInput")), False)
-        ),
-        human_input_reason=_optional_str(
-            item.get("human_input_reason", item.get("humanInputReason"))
-        ),
+        is_read=policy_field(item, "is_read", bool, label="note", required=False) or False,
+        needs_human_input=policy_field(item, "needs_human_input", bool, label="note", required=False) or False,
+        human_input_reason=policy_field(item, "human_input_reason", str, label="note", required=False, nullable=True),
     )

@@ -11,6 +11,7 @@ from exceptions import (
     ChallengeFailed,
     ChallengeRateLimited,
     ChallengeSuspended,
+    ChallengeUnknown,
     ChallengeUsed,
     PermissionDenied,
 )
@@ -98,10 +99,10 @@ def verify_or_reissue_challenge(
         )
     except (ChallengeSuspended, ChallengeRateLimited) as exc:
         return _limited_result(result_factory, exc, operation_id=operation_id)
-    except ChallengeUsed as exc:
+    except (ChallengeUsed, ChallengeUnknown) as exc:
         return result_factory(
             status="blocked",
-            error="challenge_used",
+            error=challenge_error_code(exc),
             operation_id=operation_id,
             message=str(exc),
             retryable=False,
@@ -139,4 +140,6 @@ def challenge_error_code(exc: Exception) -> str:
         return "challenge_expired"
     if isinstance(exc, ChallengeUsed):
         return "challenge_used"
+    if isinstance(exc, ChallengeUnknown):
+        return "challenge_unknown"
     return "challenge_failed"

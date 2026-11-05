@@ -88,6 +88,10 @@ class ChallengeUsed(NoviIsMCPError):
     """Raised when a challenge is reused."""
 
 
+class ChallengeUnknown(NoviIsMCPError):
+    """Raised when challenge history cannot establish the previous write outcome."""
+
+
 class ChallengeFailed(NoviIsMCPError):
     """Raised when a challenge answer is incorrect or invalid."""
 

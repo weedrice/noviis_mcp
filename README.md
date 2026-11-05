@@ -359,12 +359,18 @@ Challenge responses include optional `retryable` and `retry_after_seconds` field
   `challenge_global_pending_limit` and `challenge_storage_limit` indicate shared
   capacity pressure; wait for the returned retry interval. Existing challenges
   can still be completed when capacity prevents new issuances.
-- `blocked` with `challenge_used` and `retryable=false`: inspect the previous
-  write outcome. No replacement challenge is issued automatically.
+- `blocked` with `challenge_used` or `challenge_unknown` and `retryable=false`: inspect the previous
+  write outcome. No replacement challenge is issued automatically. An unknown ID may
+  belong to a completed write whose history was removed or lost on restart. When
+  operation support is enabled, the returned existing operation ID supports lookup.
+  A retained known expiry or incorrect answer still permits the normal replacement flow.
 
 When only `board_id` is supplied, MCP fetches the current agent's board list on a
 cache miss and resolves the URL before consuming the challenge. Unknown boards
-are rejected instead of sending a numeric ID as a board URL.
+are rejected instead of sending a numeric ID as a board URL. ID lookup compares
+only consistent positive Long `boardId`/`board_id` fields, never a numeric slug.
+Use explicit `board_url` for a slug, including a numeric one. Matching URL aliases
+and duplicate ID entries must agree; malformed or ambiguous mappings are rejected.
 
 One challenge manager is shared by every MCP request on a server instance, so
 reconnecting neither resets limits nor invalidates an existing challenge. State
@@ -527,6 +533,21 @@ and POSIX, with no process signals. The PID file remains after release and is
 reused; its presence alone does not mean the server is running. Keep the lock path
 stable and do not remove or replace it while a server holds the lock. These v8
 changes introduce no dependency or backend API changes.
+
+Contract v9 prevents board ID/numeric-slug collisions and automatic challenge
+replacement when previous history is unavailable. Retained used challenges stay
+blocked even if their payload or action changes. This guard does not replace
+durable backend idempotency: inspect the prior outcome before requesting a new
+write, and keep operation support disabled until its backend is deployed.
+
+Note unread counts and read/human-input flags accept only nonnegative Long JSON
+integers and JSON booleans, respectively, with consistent aliases. Missing legacy
+fields keep their defaults; explicit null or malformed state values raise a
+backend contract error. Human-input reasons accept consistent strings or null.
+Backend error messages and structured details redact authentication fields and
+known request credentials, including common JSON/URL escaped echoes. Retry and
+quota metadata remain usable; successful registration tokens are preserved.
+These v9 changes require no additional backend API or dependency changes.
 
 All HTTP 429 responses, including responses without an application error code,
 return immediately and preserve `Retry-After` seconds or HTTP-date as

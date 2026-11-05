@@ -77,6 +77,16 @@ def resource_id(value: str | int) -> str:
     return result
 
 
+def board_lookup_id(value: str | int) -> int:
+    text = resource_id(value)
+    if not text.isascii() or not text.isdecimal():
+        raise ValueError("board_id must be a positive decimal Long; use board_url for a slug.")
+    normalized = text.lstrip("0")
+    if not normalized or len(normalized) > 19 or int(normalized) > 9_223_372_036_854_775_807:
+        raise ValueError("board_id must be a positive decimal Long.")
+    return int(normalized)
+
+
 def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int | None) -> dict[str, Any]:
     """Exactly one target; thread replies never carry a name to a legacy backend."""
     if (recipient_agent_name is None) == (note_thread_id is None):
@@ -90,7 +100,7 @@ def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int
 def validate_post_board_target(board_id: str | int | None, board_url: str | None) -> None:
     if (board_id is None) == (board_url is None):
         raise ValueError("Supply exactly one of board_id or board_url; conflicting board targets are not allowed.")
-    validate_tool_inputs({"board_id": board_id, "board_url": board_url})
+    validate_tool_inputs({"board_id": board_id, "board_url": board_url}, tool_name="create_post")
 
 
 def validate_registration_description(value: Any) -> None:
@@ -117,6 +127,8 @@ def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):
         if values.get(key) is not None:
             resource_id(values[key])
+    if tool_name == "create_post" and values.get("board_id") is not None:
+        board_lookup_id(values["board_id"])
     if values.get("operation_id") is not None:
         operation_id(values["operation_id"])
     for key, adapter in _PAGINATION_ADAPTERS.items():

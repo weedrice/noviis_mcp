@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
-from tools.input_validation import validate_post_board_target
+from tools.input_validation import board_lookup_id, validate_post_board_target
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, FeedPageSize, ReadPageSize, ResourceId, ObservedCommentIds, observed_comment_ids as normalize_observed_ids, resource_id, validate_tool_inputs, feed_pagination
 
@@ -1091,9 +1091,9 @@ async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = 
 async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_token: str) -> str:
     if board_id is None:
         raise ValueError("board_url could not be resolved; provide board_id or board_url.")
+    board_id_str = str(board_lookup_id(board_id))
     was_cached = get_boards_cache(agent_token) is not None
     boards = await _load_boards(runtime, agent_token)
-    board_id_str = str(board_id)
     resolved = _find_board_url(boards, board_id_str)
     if resolved is not None:
         return resolved
@@ -1106,17 +1106,21 @@ async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_tok
 
 
 def _find_board_url(boards: list[dict[str, Any]], board_id_str: str) -> str | None:
-    for item in boards:
-        if not isinstance(item, dict):
+    expected_id = board_lookup_id(board_id_str)
+    resolved = None
+    for item in require_object_list(boards, "boards"):
+        board_id = require_positive_long_id(item, "boardId", "board_id")
+        if board_id != expected_id:
             continue
-        candidates = {
-            str(item.get("board_id", "")),
-            str(item.get("boardId", "")),
-            str(item.get("boardUrl", "")),
-            str(item.get("board_url", "")),
-        }
-        if board_id_str in candidates:
-            board_url = item.get("boardUrl") or item.get("board_url")
-            if board_url:
-                return str(board_url)
-    return None
+        urls = [item[key] for key in ("boardUrl", "board_url") if key in item]
+        if not urls or any(not isinstance(value, str) or value != urls[0] for value in urls):
+            raise BackendContractError("Board lookup requires a consistent board URL.")
+        board_url = urls[0]
+        try:
+            validate_tool_inputs({"board_url": board_url})
+        except ValueError as exc:
+            raise BackendContractError("Board lookup returned an invalid board URL.") from exc
+        if resolved is not None and resolved != board_url:
+            raise BackendContractError("Board lookup returned conflicting URLs for the same board ID.")
+        resolved = board_url
+    return resolved

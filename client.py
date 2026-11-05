@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from typing import Any
 import httpx
 import anyio
 from cache import clear_boards_cache
+from logging_utils import sanitize_error_data
 
 from config import (
     AGENT_API_PREFIX,
@@ -81,6 +83,7 @@ class NoviIsClient:
         operation_id: str | None = None,
     ) -> dict[str, Any]:
         headers = self._build_headers(token)
+        error_secrets = (self._internal_secret, token)
         if operation_id is not None:
             headers["Idempotency-Key"] = _operation_id(operation_id)
         safe_to_retry = method.upper() in {"GET", "HEAD", "OPTIONS"}
@@ -117,12 +120,12 @@ class NoviIsClient:
                 message = "NoviIs API request deadline exhausted."
                 if not safe_to_retry:
                     message += " Write outcome is unknown; inspect activity before retrying."
-                raise ServerError(message) from exc
+                raise ServerError(message) from None
             except httpx.HTTPError as exc:
-                message = f"NoviIs API request failed: {exc}"
+                message = "NoviIs API request failed: " + sanitize_error_data(str(exc), known_secrets=error_secrets)
                 if not safe_to_retry:
                     message += " Write outcome is unknown; inspect activity before retrying."
-                raise ServerError(message) from exc
+                raise ServerError(message) from None
 
             if 200 <= response.status_code < 300:
                 logger.info(
@@ -158,10 +161,10 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                raise Unauthorized(self._extract_message(response))
+                raise Unauthorized(self._extract_message(response, known_secrets=error_secrets))
             if response.status_code == 403:
                 payload = self._parse_json(response)
-                error = self._extract_error(payload, response)
+                error = self._extract_error(payload, response, known_secrets=error_secrets)
                 logger.warning(
                     "noviis_api_forbidden",
                     extra={
@@ -169,12 +172,12 @@ class NoviIsClient:
                         "path": path,
                         "status_code": response.status_code,
                         "token": mask_token(token),
-                        "response_status": payload.get("status"),
+                        "response_status": sanitize_error_data(payload.get("status"), known_secrets=error_secrets),
                         "error_code": error["code"],
                     },
                 )
                 if payload.get("status") == "suspended":
-                    raise AgentSuspended(payload.get("message", "Agent is suspended"))
+                    raise AgentSuspended(error["message"] or "Agent is suspended")
                 if self._is_agent_header_required(error):
                     raise PermissionDenied(
                         "NoviIs backend rejected the request because X-NoviIs-Agent was missing or invalid"
@@ -193,7 +196,7 @@ class NoviIsClient:
                 raise PermissionDenied(error["message"] or "Permission denied")
             if response.status_code == 429:
                 payload = self._parse_json(response)
-                error = self._extract_error(payload, response)
+                error = self._extract_error(payload, response, known_secrets=error_secrets)
                 retry_after = self._parse_retry_after(response)
                 if retry_after is not None:
                     error["details"] = {**error["details"], "retry_after_seconds": retry_after}
@@ -219,7 +222,7 @@ class NoviIsClient:
                             "token": mask_token(token),
                         },
                     )
-                    message = self._extract_message(response)
+                    message = self._extract_message(response, known_secrets=error_secrets)
                     if not safe_to_retry:
                         message = (
                             "Write outcome is unknown; request was not automatically retried. "
@@ -232,7 +235,7 @@ class NoviIsClient:
                 if remaining <= SERVER_ERROR_WAIT + 1.0:
                     raise ServerError(
                         "NoviIs API read retry skipped: insufficient request deadline budget. "
-                        + self._extract_message(response)
+                        + self._extract_message(response, known_secrets=error_secrets)
                     )
                 retried_500 = True
                 logger.warning(
@@ -249,7 +252,7 @@ class NoviIsClient:
                 continue
 
             payload = self._parse_json(response)
-            error = self._extract_error(payload, response)
+            error = self._extract_error(payload, response, known_secrets=error_secrets)
             if error["code"]:
                 raise NoviIsAPIError(
                     status_code=response.status_code,
@@ -267,7 +270,13 @@ class NoviIsClient:
                     "token": mask_token(token),
                 },
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise httpx.HTTPStatusError(
+                    sanitize_error_data(str(exc), known_secrets=error_secrets),
+                    request=exc.request, response=exc.response,
+                ) from None
 
     def _build_headers(self, token: str | None) -> dict[str, str]:
         if token is not None and len(token) > 4096:
@@ -306,27 +315,32 @@ class NoviIsClient:
         }
 
     @staticmethod
-    def _extract_error(payload: dict[str, Any], response: httpx.Response) -> dict[str, Any]:
+    def _extract_error(payload: dict[str, Any], response: httpx.Response, *,
+                       known_secrets: tuple[str | None, ...] = ()) -> dict[str, Any]:
+        # Decode JSON before fallback rendering so arbitrary JSON escapes cannot
+        # disguise a known credential in an unstructured diagnostic field.
+        payload = sanitize_error_data(payload, known_secrets=known_secrets)
+        fallback = json.dumps(payload, ensure_ascii=False) if payload else response.text or f"HTTP {response.status_code}"
         error = payload.get("error")
         if isinstance(error, dict):
             details = error.get("details")
-            return {
+            return sanitize_error_data({
                 "code": _optional_str(error.get("code")),
-                "message": _optional_str(error.get("message")) or response.text or f"HTTP {response.status_code}",
+                "message": _optional_str(error.get("message")) or fallback,
                 "details": details if isinstance(details, dict) else {},
-            }
+            }, known_secrets=known_secrets)
 
         details = payload.get("details")
-        return {
+        return sanitize_error_data({
             "code": _optional_str(payload.get("code") or payload.get("error")),
-            "message": _optional_str(payload.get("message")) or response.text or f"HTTP {response.status_code}",
+            "message": _optional_str(payload.get("message")) or fallback,
             "details": details if isinstance(details, dict) else {},
-        }
+        }, known_secrets=known_secrets)
 
     @staticmethod
-    def _extract_message(response: httpx.Response) -> str:
+    def _extract_message(response: httpx.Response, *, known_secrets: tuple[str | None, ...] = ()) -> str:
         payload = NoviIsClient._parse_json(response)
-        return NoviIsClient._extract_error(payload, response)["message"]
+        return NoviIsClient._extract_error(payload, response, known_secrets=known_secrets)["message"]
 
     @staticmethod
     def _is_agent_header_required(error: dict[str, Any]) -> bool:

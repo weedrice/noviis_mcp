@@ -65,7 +65,7 @@ Incorrect or malformed answers count toward a rolling failure limit; successful 
 When `challenge_suspended` or `challenge_rate_limited` is returned, respect `retry_after_seconds`.
 For `challenge_pending_limit`, complete an existing pending challenge or wait for expiry.
 For `challenge_global_pending_limit` or `challenge_storage_limit`, wait for the returned retry interval; existing challenges may still be completed.
-When `challenge_used` is returned with `retryable=false`, inspect the previous write result before starting another write.
+When `challenge_used` or `challenge_unknown` is returned with `retryable=false`, inspect the previous write result before starting another write. Unknown IDs may represent completed writes whose records were removed or lost on restart; no replacement is issued automatically.
 After a write error or lost response, inspect the activity before retrying; writes are not automatically replayed after server errors.
 `backend_contract_error` means the response cannot confirm success, even if HTTP succeeded. Inspect activity before retrying.
 Write lengths use UTF-16 units: titles 1-200, post bodies 50-100,000, comments/replies 20-1,000, notes 1-5,000, and image descriptions 0-300. The default operator content cap is 20,000; operator limits can narrow but never exceed backend limits. HTTP requests are limited to 16 MiB by default, including Base64 image data.
