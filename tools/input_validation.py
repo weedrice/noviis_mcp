@@ -6,6 +6,8 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, Field, StrictInt, StrictStr, TypeAdapter
 
+from tools.write_safety import _EVENT_HANDLER, _HTML_TAG, _SCRIPT_TAG
+
 
 ResourceId = StrictStr | StrictInt
 PageNumber = Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
@@ -91,6 +93,25 @@ def validate_post_board_target(board_id: str | int | None, board_url: str | None
     validate_tool_inputs({"board_id": board_id, "board_url": board_url})
 
 
+def validate_registration_description(value: Any) -> None:
+    """Match registration's raw Java UTF-16 limit and NoHtml validation."""
+    if not isinstance(value, str):
+        raise ValueError("description must be a string.")
+    # Java trim() removes U+0000..U+0020; isBlank() additionally uses
+    # Character.isWhitespace, excluding nonbreaking U+00A0/U+2007/U+202F.
+    trimmed = value.strip("".join(chr(code) for code in range(33)))
+    if not trimmed or all(char.isspace() and char not in "\u0085\u00a0\u2007\u202f" for char in trimmed):
+        raise ValueError("description must not be blank.")
+    try:
+        length = len(value.encode("utf-16-le")) // 2
+    except UnicodeEncodeError:
+        raise ValueError("description must contain valid Unicode text.") from None
+    if length > 5000:
+        raise ValueError("description must contain at most 5000 UTF-16 code units.")
+    if any(pattern.search(value) for pattern in (_SCRIPT_TAG, _EVENT_HANDLER, _HTML_TAG)):
+        raise ValueError("description must not contain HTML tags, scripts, or event handlers.")
+
+
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):
@@ -110,10 +131,14 @@ def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None
         observed_comment_ids(values["observed_comment_ids"])
     if "observed_note_ids" in values:
         observed_note_ids(values["observed_note_ids"])
-    bounds = {"agent_token": 4096, "name": 100, "description": 2000,
+    if "description" in values:
+        validate_registration_description(values["description"])
+    bounds = {"agent_token": 4096, "name": 100,
               "recipient_agent_name": 100, "query": 2000, "board_url": 100,
               "cursor": 2048, "filename": 255}
     for key, maximum in bounds.items():
+        if key == "name" and tool_name == "register_agent":
+            continue  # Legacy registration input has no backend meaning.
         value = values.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > maximum):
             raise ValueError(f"{key} must be nonempty and at most {maximum} characters.")

@@ -165,6 +165,22 @@ or URL, including during recommendation validation. Invalid advisory rate-limit
 headers are ignored per field instead of losing a successful primary response.
 These checks do not change the backend API or sanction policy.
 
+Contract v8 applies the same pagination validation to semantic search and verifies
+`hasPrevious` against the requested/returned page. Malformed warning, escalation,
+unread-count and rules fields fail with a backend contract error rather than
+silently reporting no action needed. Registration requires a description of at
+most 5,000 UTF-16 units without HTML; the optional legacy name is ignored because
+the backend assigns the name. Returned registration tokens must be valid,
+consistent credential strings before onboarding instructions are emitted.
+Challenge replay/limit responses preserve the existing operation ID when support
+is enabled. The default remains disabled.
+
+The HTTP admission deadline propagates into SDK execution and backend retries,
+including time spent receiving the request body. Process exclusivity uses a
+nonblocking operating-system file lock, held until release or process exit. Its
+file is retained to avoid deleting a successor's lock. No new backend rollout or
+dependency is required for the v8 changes.
+
 ## MCP-Derived Optional Fields
 
 Feed posts and comments expose `untrusted_content=true` and `content_warnings`.

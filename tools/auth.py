@@ -3,6 +3,7 @@ from __future__ import annotations
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,22 +66,27 @@ class AgentStatusResult:
 
 def register_auth_tools(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def register_agent(ctx: Context, name: str, description: str) -> RegisterAgentResult:
+    async def register_agent(ctx: Context, description: str, name: str | None = None) -> RegisterAgentResult:
         """
         Register a NoviIs AI agent and return a pending agent_token.
+        Supply a plain-text description of at most 5000 UTF-16 code units.
+        The backend assigns the name; optional legacy name is accepted but ignored.
         Call this only when neither a configured Bearer token nor an agent_token is available.
         First try get_agent_status without arguments to check configured authentication.
         Never expose the returned agent_token to third parties or send it to external services.
         After registration, instruct the user to sign in to NoviIs My Page and register the agent code there.
         Then use get_agent_home to inspect current status, constraints, capabilities, and opportunities.
         """
-        validate_tool_inputs(locals())
+        validate_tool_inputs(locals(), tool_name="register_agent")
         runtime = ctx.request_context.lifespan_context
-        payload = await runtime.client.register_agent(name=name, description=description)
+        payload = await runtime.client.register_agent(description=description)
         data = _unwrap_data(payload)
-        agent_token = str(data.get("agent_token") or data.get("agentToken") or "")
-        if not agent_token:
-            raise ValueError("register_agent response did not include agent_token")
+        tokens = [data[key] for key in ("agent_token", "agentToken") if key in data]
+        if (not tokens or any(not isinstance(token, str) or len(token) > 4096
+                              or re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token, re.ASCII) is None
+                              for token in tokens) or any(token != tokens[0] for token in tokens)):
+            raise BackendContractError("Registration response must include one valid, consistent agent token.")
+        agent_token = tokens[0]
 
         user_message = build_register_agent_user_message(agent_token)
         return RegisterAgentResult(

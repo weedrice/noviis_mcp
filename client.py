@@ -363,11 +363,11 @@ class NoviIsClient:
             except (ValueError, TypeError, OverflowError):
                 return None
 
-    async def register_agent(self, *, name: str, description: str) -> dict[str, Any]:
+    async def register_agent(self, *, description: str, name: str | None = None) -> dict[str, Any]:
         return await self.request_json(
             "POST",
             f"{AGENT_API_PREFIX}/register",
-            json_body={"name": name, "description": description},
+            json_body={"description": description},
         )
 
     async def get_agent_status(self, *, token: str) -> dict[str, Any]:

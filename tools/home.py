@@ -3,7 +3,8 @@ from __future__ import annotations
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 from tools.constraint_contract import validate_hard_constraints
-from tools.status_contract import policy_field, validate_policy_quota
+from exceptions import BackendContractError
+from tools.status_contract import policy_field, policy_object, validate_policy_quota
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,7 +25,6 @@ from tools.parsing import (
     optional_int as _optional_int_or_none,
     optional_str as _optional_str,
     str_list as _str_list,
-    unwrap_dict_data as _unwrap_data,
 )
 from tools.tool_contract import validate_action
 from tools.parsing import guidance_texts
@@ -247,18 +247,19 @@ def register_home_tools(mcp: FastMCP) -> None:
 
 
 def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
-    data = _unwrap_data(payload)
+    policy_object(payload, "home response")
+    data = policy_object(payload.get("data", payload), "home")
     _require_agent_home_contract(data)
     agent = _to_agent(data.get("agent"), data)
     usage = _to_usage(data.get("usage"))
     capabilities = _to_capabilities(data.get("capabilities"))
     hard_constraints = _to_hard_constraints(data.get("hard_constraints", data.get("hardConstraints")))
     activity_on_my_posts = _to_post_activities(
-        data.get("activity_on_my_posts", data.get("activityOnMyPosts"))
+        policy_field(data, "activity_on_my_posts", list, label="home")
     )
-    note_summary = _to_note_summary(data.get("note_summary", data.get("noteSummary")))
+    note_summary = _to_note_summary(policy_field(data, "note_summary", dict, label="home", required=False, nullable=True))
     opportunities = _to_opportunities(data.get("opportunities"))
-    warnings = _str_list(data.get("warnings"))
+    warnings = _attention_strings(policy_field(data, "warnings", list, label="home"), "home.warnings")
     return AgentHomeResult(
         agent=agent,
         usage=usage,
@@ -283,7 +284,7 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
             warnings=warnings,
         ),
         human_escalations=_to_human_escalations(
-            data.get("human_escalations", data.get("humanEscalations")),
+            policy_field(data, "human_escalations", list, label="home", required=False, nullable=True),
             agent=agent,
             hard_constraints=hard_constraints,
             note_summary=note_summary,
@@ -418,18 +419,29 @@ def _to_hard_constraints(payload: Any) -> HardConstraints:
     )
 
 
+def _attention_strings(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if type(value) is not list or any(type(item) is not str or not item.strip() for item in value):
+        raise BackendContractError(f"{label} must contain nonempty strings.")
+    return list(value)
+
+
+def _attention_objects(value: Any, label: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if type(value) is not list:
+        raise BackendContractError(f"{label} must be a list.")
+    return [policy_object(item, label) for item in value]
+
+
 def _to_note_summary(value: Any) -> NoteSummary | None:
-    if not isinstance(value, dict):
+    if value is None:
         return None
+    value = policy_object(value, "note_summary")
     return NoteSummary(
-        unread_thread_count=_optional_int(
-            value.get("unread_thread_count", value.get("unreadThreadCount")),
-            0,
-        ),
-        unread_note_count=_optional_int(
-            value.get("unread_note_count", value.get("unreadNoteCount")),
-            0,
-        ),
+        unread_thread_count=policy_field(value, "unread_thread_count", int, label="note_summary"),
+        unread_note_count=policy_field(value, "unread_note_count", int, label="note_summary"),
     )
 
 
@@ -441,8 +453,8 @@ def _to_heartbeat(
     note_summary: NoteSummary | None,
     warnings: list[str],
 ) -> HeartbeatRecommendation:
-    payload = value if isinstance(value, dict) else {}
-    reasons = _str_list(payload.get("reasons"))
+    payload = {} if value is None else policy_object(value, "heartbeat")
+    reasons = _attention_strings(payload.get("reasons"), "heartbeat.reasons")
     if any(activity.unread_count > 0 for activity in activity_on_my_posts):
         reasons.append("activity_on_my_posts")
     if note_summary and (note_summary.unread_thread_count > 0 or note_summary.unread_note_count > 0):
@@ -453,7 +465,7 @@ def _to_heartbeat(
         reasons.append("agent_suspended")
 
     unique_reasons = _dedupe(reasons)
-    urgency = _optional_str(payload.get("urgency"))
+    urgency = policy_field(payload, "urgency", str, label="heartbeat", required=False, nullable=True)
     if not urgency:
         if hard_constraints.suspended or warnings:
             urgency = "urgent"
@@ -462,16 +474,16 @@ def _to_heartbeat(
         else:
             urgency = "normal"
 
+    interval = policy_field(payload, "recommended_interval_seconds", int, label="heartbeat", required=False, nullable=True)
+    if interval == 0:
+        raise BackendContractError("heartbeat.recommended_interval_seconds must be positive.")
     return HeartbeatRecommendation(
-        recommended_interval_seconds=_optional_int(
-            payload.get("recommended_interval_seconds", payload.get("recommendedIntervalSeconds")),
-            1800,
-        ),
+        recommended_interval_seconds=1800 if interval is None else interval,
         urgency=urgency,
         reasons=unique_reasons,
-        primary_tool=_optional_str(payload.get("primary_tool", payload.get("primaryTool"))) or "get_agent_home",
-        report_style=_optional_str(payload.get("report_style", payload.get("reportStyle"))) or "silent_ok_or_short_summary",
-        next_check_after=_optional_str(payload.get("next_check_after", payload.get("nextCheckAfter"))),
+        primary_tool=policy_field(payload, "primary_tool", str, label="heartbeat", required=False, nullable=True) or "get_agent_home",
+        report_style=policy_field(payload, "report_style", str, label="heartbeat", required=False, nullable=True) or "silent_ok_or_short_summary",
+        next_check_after=policy_field(payload, "next_check_after", str, label="heartbeat", required=False, nullable=True, timestamp=True),
     )
 
 
@@ -483,7 +495,7 @@ def _to_human_escalations(
     note_summary: NoteSummary | None,
     warnings: list[str],
 ) -> list[HumanEscalation]:
-    escalations = [_to_human_escalation(item) for item in _dict_list(value)]
+    escalations = [_to_human_escalation(item) for item in _attention_objects(value, "human_escalations")]
     if hard_constraints.suspended:
         escalations.append(
             HumanEscalation(
@@ -519,13 +531,18 @@ def _to_human_escalations(
 
 
 def _to_human_escalation(item: dict[str, Any]) -> HumanEscalation:
+    target = item.get("target_id", item.get("targetId"))
+    target_kind = int if type(target) is int else str
+    target = policy_field(item, "target_id", target_kind, label="human_escalation", required=False, nullable=True)
+    if target_kind is int and target == 0:
+        raise BackendContractError("human_escalation.target_id must be positive.")
     return HumanEscalation(
-        type=str(item.get("type", "")),
-        summary=str(item.get("summary", "")),
-        reason=_optional_str(item.get("reason")),
-        severity=str(item.get("severity", "medium")),
-        target_type=_optional_str(item.get("target_type", item.get("targetType"))),
-        target_id=_optional_str(item.get("target_id", item.get("targetId"))),
+        type=policy_field(item, "type", str, label="human_escalation"),
+        summary=policy_field(item, "summary", str, label="human_escalation"),
+        reason=policy_field(item, "reason", str, label="human_escalation", required=False, nullable=True),
+        severity=policy_field(item, "severity", str, label="human_escalation", required=False, nullable=True) or "medium",
+        target_type=policy_field(item, "target_type", str, label="human_escalation", required=False, nullable=True),
+        target_id=str(target) if target is not None else None,
     )
 
 
@@ -542,7 +559,7 @@ def _dedupe(values: list[str]) -> list[str]:
 
 def _to_post_activities(value: Any) -> list[HomePostActivity]:
     activities = []
-    for item in _dict_list(value):
+    for item in _attention_objects(value, "activity_on_my_posts"):
         activities.append(_to_post_activity(item))
     return activities
 
@@ -554,11 +571,9 @@ def _to_post_activity(item: dict[str, Any]) -> HomePostActivity:
         board_id=_optional_id(item.get("board_id", item.get("boardId"))),
         board_name=_optional_str(item.get("board_name", item.get("boardName"))),
         board_url=_optional_str(item.get("board_url", item.get("boardUrl"))),
-        unread_count=_optional_int(
-            item.get("unread_count", item.get("unreadCount", item.get("new_comment_count", item.get("newCommentCount")))),
-            0,
-        ),
-        comment_count=_optional_int(item.get("comment_count", item.get("commentCount")), 0),
+        unread_count=policy_field(item, "unread_count", int, label="activity", required=False,
+                                  aliases=("new_comment_count", "newCommentCount")) or 0,
+        comment_count=policy_field(item, "comment_count", int, label="activity", required=False) or 0,
         latest_comment_id=_optional_id(item.get("latest_comment_id", item.get("latestCommentId"))),
         latest_comment_preview=_optional_str(
             item.get("latest_comment_preview", item.get("latestCommentPreview"))

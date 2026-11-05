@@ -12,9 +12,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from tools.metadata import RateLimitInfo, build_rate_limit_info
 from exceptions import BackendContractError
 from tools.response_contract import require_positive_long_id
+from tools.pagination import read_pagination
+from tools.status_contract import policy_field
 from tools.parsing import (
-    optional_bool as _optional_bool,
-    optional_int as _optional_int,
     read_collection,
 )
 
@@ -86,19 +86,26 @@ def register_search_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return build_semantic_search_result(payload)
+        return build_semantic_search_result(payload, requested_page=page, requested_size=size)
 
 
-def build_semantic_search_result(payload: dict[str, Any]) -> SemanticSearchResult:
+def build_semantic_search_result(
+    payload: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
+) -> SemanticSearchResult:
     data, raw_content = read_collection(payload, "content")
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    has_previous = policy_field(data, "has_previous", bool, label="search", required=False)
+    page = pagination["page"] if pagination["page"] is not None else requested_page
+    if has_previous is not None and page is not None and has_previous != (page > 0):
+        raise BackendContractError("Search has_previous disagrees with the page number.")
     return SemanticSearchResult(
         content=[_to_search_item(item) for item in raw_content],
-        page=_optional_int(data.get("page", data.get("number", data.get("pageNumber")))),
-        size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("totalElements", data.get("total_elements"))),
-        total_pages=_optional_int(data.get("totalPages", data.get("total_pages"))),
-        has_next=_optional_bool(data.get("hasNext", data.get("has_next"))),
-        has_previous=_optional_bool(data.get("hasPrevious", data.get("has_previous"))),
+        page=pagination["page"],
+        size=pagination["size"],
+        total_elements=pagination["total_elements"],
+        total_pages=pagination["total_pages"],
+        has_next=pagination["has_next"],
+        has_previous=has_previous,
         rate_limit=build_rate_limit_info(payload),
     )
 

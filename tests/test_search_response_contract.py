@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from mcp.server.fastmcp.exceptions import ToolError
+from tools.tool_contract import tool_contracts
 
 from exceptions import BackendContractError
 from tools.search import build_semantic_search_result
@@ -102,3 +107,55 @@ class SearchResponseContractTest(unittest.TestCase):
             item[field] = value
             with self.subTest(field=field, value=value), self.assertRaises(BackendContractError):
                 self.parse(item)
+
+
+class SearchPaginationContractTest(unittest.IsolatedAsyncioTestCase):
+    async def search(self, metadata, *, page=3, size=10):
+        backend = AsyncMock()
+        backend.search_semantic.return_value = {"data": {"content": [], **metadata}}
+        ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace(client=backend)))
+        result = await tool_contracts()["search_content"].run(
+            {"query": "sample", "page": page, "size": size}, context=ctx)
+        backend.search_semantic.assert_awaited_once_with(
+            query="sample", token=None, content_type="ALL", board_url=None, page=page, size=size)
+        return result
+
+    async def test_search_checks_requested_page_and_size_at_tool_boundary(self):
+        for metadata in ({"page": 0}, {"size": 20}, {"number": 0}, {"pageSize": 20}):
+            with self.subTest(metadata=metadata), self.assertRaisesRegex(ToolError, "backend_contract_error"):
+                await self.search(metadata)
+        result = await self.search({"page": 3, "size": 10, "totalElements": 41,
+                                    "totalPages": 5, "hasNext": True, "hasPrevious": True})
+        self.assertEqual((result.page, result.size, result.total_pages), (3, 10, 5))
+        self.assertTrue(result.has_next)
+        self.assertTrue(result.has_previous)
+
+    async def test_search_rejects_malformed_or_conflicting_page_metadata(self):
+        for metadata in ({"hasNext": "unknown", "has_next": False}, {"hasNext": "false"},
+                         {"page": 3, "number": 0}, {"hasPrevious": True, "has_previous": False},
+                         {"page": 3, "totalPages": 2, "hasNext": True},
+                         {"size": 10, "totalElements": 21, "totalPages": 2},
+                         {"size": None}, {"totalElements": True}):
+            with self.subTest(metadata=metadata), self.assertRaisesRegex(ToolError, "backend_contract_error"):
+                await self.search(metadata)
+
+    async def test_previous_flag_uses_strict_boolean_and_page_consistency(self):
+        for key in ("hasPrevious", "has_previous"):
+            for value in (None, "false", 0, 1, {}, []):
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ToolError, "backend_contract_error"):
+                    await self.search({key: value})
+        for page, previous in ((0, True), (3, False)):
+            with self.subTest(page=page), self.assertRaisesRegex(ToolError, "backend_contract_error"):
+                await self.search({"hasPrevious": previous}, page=page)
+        first = await self.search({"has_previous": False}, page=0)
+        self.assertFalse(first.has_previous)
+        self.assertIsNone(first.page)
+
+    async def test_missing_metadata_remains_unknown_and_out_of_range_pages_are_supported(self):
+        result = await self.search({})
+        for name in ("page", "size", "total_elements", "total_pages", "has_next", "has_previous"):
+            self.assertIsNone(getattr(result, name))
+        result = await self.search({"page": 3, "size": 10, "totalElements": 1,
+                                    "totalPages": 1, "last": True, "hasPrevious": True})
+        self.assertFalse(result.has_next)
+        self.assertTrue(result.has_previous)
