@@ -227,9 +227,9 @@
         }, {
           "available_actions" : [ {
             "params" : {
-              "board_id" : 9,
               "page" : 0,
-              "size" : 20
+              "size" : 20,
+              "board_id" : 9
             },
             "tool" : "get_board_posts"
           }, {
@@ -256,9 +256,9 @@
         }, {
           "available_actions" : [ {
             "params" : {
-              "post_id" : 170,
               "page" : 0,
-              "size" : 50
+              "size" : 20,
+              "post_id" : 170
             },
             "tool" : "get_post_comments"
           } ],

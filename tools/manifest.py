@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-11-05"
-CONTRACT_VERSION = "2026-11-05.mcp-contract-v3"
+CONTRACT_VERSION = "2026-11-05.mcp-contract-v4"
 
 
 @dataclass

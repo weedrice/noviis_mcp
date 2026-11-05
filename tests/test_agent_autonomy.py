@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v3")
+        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v4")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)
         self.assertIn("write_results.retryable", result.supported_optional_fields)
 

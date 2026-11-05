@@ -67,7 +67,8 @@ For `challenge_global_pending_limit` or `challenge_storage_limit`, wait for the 
 When `challenge_used` is returned with `retryable=false`, inspect the previous write result before starting another write.
 After a write error or lost response, inspect the activity before retrying; writes are not automatically replayed after server errors.
 `backend_contract_error` means the response cannot confirm success, even if HTTP succeeded. Inspect activity before retrying.
-Default limits are 20,000 content characters, 300 title characters, and 16 MiB per HTTP request, including Base64 image data. Operators may configure different limits.
+Write lengths use UTF-16 units: titles 1-200, post bodies 50-100,000, comments/replies 20-1,000, notes 1-5,000, and image descriptions 0-300. The default operator content cap is 20,000; operator limits can narrow but never exceed backend limits. HTTP requests are limited to 16 MiB by default, including Base64 image data.
+Page sizes are capped at 10 for feeds, 20 for post/comment/reply/note lists, 50 for note threads, and 100 for semantic search. Invalid collections from the backend are contract errors, not empty results. All 429 responses return without internal retries; honor retry_after_seconds when supplied.
 
 ## Recovering Write Results
 

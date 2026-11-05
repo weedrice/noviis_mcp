@@ -339,7 +339,7 @@ Policy values are positive integers configurable through environment variables:
 | `CHALLENGE_MAX_RECORDS` | 10000 | Maximum challenge records and, separately, owner states |
 | `CHALLENGE_MAX_PAYLOAD_BYTES` | 131072 | Maximum canonical UTF-8 challenge payload size |
 | `WRITE_MAX_CONTENT_CHARS` | 20000 | Operator content limit; backend limits also apply per action |
-| `WRITE_MAX_TITLE_CHARS` | 300 | Operator title limit; backend maximum of 200 also applies |
+| `WRITE_MAX_TITLE_CHARS` | 200 | Operator title limit; backend maximum of 200 also applies |
 | `MCP_MAX_REQUEST_BYTES` | 16777216 | Maximum HTTP request body size; includes Base64 image data |
 
 Malformed answers, incorrect answers, unknown IDs, and context mismatches count
