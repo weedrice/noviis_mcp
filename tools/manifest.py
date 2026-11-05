@@ -24,6 +24,7 @@ class AgentManifestResult:
     backend_operations_supported: bool
     supported_optional_fields: list[str] = field(default_factory=list)
     primary_tools: list[str] = field(default_factory=list)
+    activity_read_contract: str = "observed-comments-v1"
 
 
 def build_agent_manifest_result() -> AgentManifestResult:
@@ -47,6 +48,9 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "create_post.image_alt",
             "challenge.answer_format",
             "write_results.retryable",
+            "write_results.text_warnings",
+            "get_boards.force_refresh",
+            "mark_post_activity_read.observed_boundary_applied",
             "write_results.operation_id",
             "feed.content",
             "comments.status",

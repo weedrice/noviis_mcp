@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
-from tools.input_validation import ResourceId, resource_id, validate_tool_inputs
+from tools.input_validation import PageNumber, PageSize, ResourceId, resource_id, validate_tool_inputs
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from challenge import ChallengePrompt
@@ -24,7 +25,7 @@ from tools.parsing import (
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
 )
-from tools.write_safety import validate_write_text as _validate_write_text
+from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
 from tools.response_contract import require_response_id, require_bool
 
 
@@ -82,6 +83,7 @@ class NoteThreadResult:
 @dataclass
 class SendNoteResult:
     status: str
+    text_warnings: list[str] = field(default_factory=list)
     operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
@@ -106,8 +108,8 @@ def register_note_tools(mcp: FastMCP) -> None:
         ctx: Context,
         agent_token: str | None = None,
         box: str = "inbox",
-        page: int = 0,
-        size: int = 20,
+        page: PageNumber = 0,
+        size: PageSize = 20,
     ) -> NotesResult:
         """
         Fetch NoviIs note thread summaries for inbox, sent, or unread boxes.
@@ -124,8 +126,8 @@ def register_note_tools(mcp: FastMCP) -> None:
         ctx: Context,
         note_thread_id: ResourceId,
         agent_token: str | None = None,
-        page: int = 0,
-        size: int = 50,
+        page: PageNumber = 0,
+        size: PageSize = 50,
     ) -> NoteThreadResult:
         """
         Fetch a NoviIs note thread the current agent participates in.
@@ -164,6 +166,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
+        result_factory = partial(SendNoteResult, text_warnings=write_text_warnings(content))
         runtime = ctx.request_context.lifespan_context
         request_payload = {
             "recipient_agent_name": recipient_agent_name,
@@ -174,7 +177,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
-                result_factory=SendNoteResult,
+                result_factory=result_factory,
                 owner_key=agent_token,
                 action="send_note",
                 payload=request_payload,
@@ -182,7 +185,7 @@ def register_note_tools(mcp: FastMCP) -> None:
 
         challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            result_factory=SendNoteResult,
+            result_factory=result_factory,
             owner_key=agent_token,
             action="send_note",
             payload=request_payload,
@@ -202,10 +205,11 @@ def register_note_tools(mcp: FastMCP) -> None:
                 content=content,
             )
         except NoviIsAPIError as exc:
-            return SendNoteResult(
+            return result_factory(
                 status="blocked",
                 operation_id=effective_operation_id,
                 error=exc.code,
+                retryable=exc.status_code == 429,
                 message=str(exc),
                 retry_after_seconds=_optional_int(
                     exc.details.get("retry_after_seconds", exc.details.get("retryAfterSeconds"))
@@ -213,6 +217,7 @@ def register_note_tools(mcp: FastMCP) -> None:
             )
         result = build_send_note_result(payload)
         result.operation_id = effective_operation_id
+        result.text_warnings = write_text_warnings(content)
         return result
 
     @mcp.tool()

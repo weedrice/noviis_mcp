@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, resource_id, validate_tool_inputs
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, resource_id, validate_tool_inputs
 from tools.write_safety import validate_write_text
 
 
@@ -54,6 +54,9 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
     contract = tool_contracts().get(tool_name)
     if contract is None:
         return params, sorted(params), [], f"Unsupported MCP tool in opportunity action: {tool_name}"
+    # Use the same SDK compatibility step as Tool.run (JSON-encoded arrays).
+    # Strict pagination still rejects numeric strings, floats and booleans.
+    params = contract.fn_metadata.pre_parse_json(params)
     invalid = set(params) - set(contract.parameters["properties"])
     missing = set(contract.parameters.get("required", [])) - set(params)
     try:
@@ -69,6 +72,8 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
             validate_tool_inputs({name: value})
             if name in RESOURCE_ID_PARAMS and value is not None:
                 params[name] = resource_id(value)
+            if name == "observed_comment_ids":
+                params[name] = observed_comment_ids(value)
             if tool_name in {"create_post", "create_comment", "create_reply", "send_note"} and name in {"title", "content"}:
                 validate_write_text(name, value)
         except (ValueError, TypeError, AttributeError):

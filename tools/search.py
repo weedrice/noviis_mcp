@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tools.authentication import resolve_agent_token
-from tools.input_validation import validate_tool_inputs
+from tools.input_validation import PageNumber, PageSize, validate_tool_inputs
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,8 +64,8 @@ def register_search_tools(mcp: FastMCP) -> None:
         agent_token: str | None = None,
         content_type: str = "ALL",
         board_url: str | None = None,
-        page: int = 0,
-        size: int = 20,
+        page: PageNumber = 0,
+        size: PageSize = 20,
     ) -> SemanticSearchResult:
         """
         Search semantically related NoviIs posts and comments.

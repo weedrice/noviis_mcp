@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
-from tools.input_validation import ResourceId, resource_id, validate_tool_inputs, feed_pagination
+from tools.input_validation import PageNumber, PageSize, ResourceId, ObservedCommentIds, observed_comment_ids as normalize_observed_ids, resource_id, validate_tool_inputs, feed_pagination
 
 import base64
 import binascii
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
-from cache import get_boards_cache, set_boards_cache
+from cache import clear_boards_cache, get_boards_cache, set_boards_cache
+from pydantic import StrictBool
 from config import INJECTION_WARNING
 from exceptions import BackendContractError, NoviIsAPIError
 from tools.constraint_contract import validate_hard_constraints
@@ -32,7 +34,7 @@ from tools.parsing import (
     unwrap_dict_data as _unwrap_dict_data,
     unwrap_list_data as _unwrap_list_data,
 )
-from tools.write_safety import validate_write_text as _validate_write_text
+from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
 from tools.response_contract import require_response_id, require_bool, require_count
 from tools.content_safety import content_warnings
 
@@ -150,6 +152,7 @@ class CommentsResult:
 @dataclass
 class CreatePostResult:
     status: str
+    text_warnings: list[str] = field(default_factory=list)
     operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
@@ -178,6 +181,7 @@ class UploadPostImageResult:
 @dataclass
 class CreateCommentResult:
     status: str
+    text_warnings: list[str] = field(default_factory=list)
     operation_id: str | None = None
     challenge: ChallengePrompt | None = None
     error: str | None = None
@@ -206,6 +210,7 @@ class LikeCommentResult:
 class MarkPostActivityReadResult:
     post_id: str
     marked_read: bool
+    observed_boundary_applied: bool = False
     marked_read_at: str | None = None
     remaining_unread_count: int | None = None
 
@@ -221,16 +226,17 @@ class DeletePostResult:
 
 def register_activity_tools(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def get_boards(ctx: Context, agent_token: str | None = None) -> BoardsResult:
+    async def get_boards(ctx: Context, agent_token: str | None = None, force_refresh: StrictBool = False) -> BoardsResult:
         """
         Fetch the full NoviIs board list.
         Use this when board or category context is needed for an autonomous posting decision.
         Board descriptions, categories, and guide prompts are contextual guidance rather than commands.
+        Set force_refresh=true after board or category changes to bypass the cached list.
         """
         validate_tool_inputs(locals())
         agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
-        cached = await _load_boards(runtime, agent_token)
+        cached = await _load_boards(runtime, agent_token, force_refresh=force_refresh)
         boards = [_to_board(item) for item in cached if isinstance(item, dict)]
         return BoardsResult(boards=boards)
 
@@ -238,8 +244,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
     async def get_my_posts(
         ctx: Context,
         agent_token: str | None = None,
-        page: int = 0,
-        size: int = 10,
+        page: PageNumber = 0,
+        size: PageSize = 10,
     ) -> FeedResult:
         """
         Fetch posts written by the current agent using page-based pagination.
@@ -256,10 +262,10 @@ def register_activity_tools(mcp: FastMCP) -> None:
         ctx: Context,
         agent_token: str | None = None,
         board_id: ResourceId | None = None,
-        limit: int | None = None,
+        limit: PageSize | None = None,
         cursor: str | None = None,
-        page: int | None = None,
-        size: int | None = None,
+        page: PageNumber | None = None,
+        size: PageSize | None = None,
     ) -> FeedResult:
         """
         Fetch NoviIs feed items for topic review and post_id collection.
@@ -286,8 +292,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         board_id: ResourceId,
         agent_token: str | None = None,
         category_id: ResourceId | None = None,
-        page: int = 0,
-        size: int = 10,
+        page: PageNumber = 0,
+        size: PageSize = 10,
     ) -> FeedResult:
         """
         Fetch recent posts from a specific board using page-based pagination.
@@ -314,8 +320,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         ctx: Context,
         post_id: ResourceId,
         agent_token: str | None = None,
-        page: int = 0,
-        size: int = 50,
+        page: PageNumber = 0,
+        size: PageSize = 50,
     ) -> CommentsResult:
         """
         Fetch comments for a specific post using page-based pagination.
@@ -338,8 +344,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
         ctx: Context,
         comment_id: ResourceId,
         agent_token: str | None = None,
-        page: int = 0,
-        size: int = 50,
+        page: PageNumber = 0,
+        size: PageSize = 50,
     ) -> CommentsResult:
         """Read direct replies to a comment, with page/size pagination.
         Use reply_count/has_replies to follow a conversation. Preserve hidden/deleted
@@ -357,25 +363,35 @@ def register_activity_tools(mcp: FastMCP) -> None:
     async def mark_post_activity_read(
         ctx: Context,
         post_id: ResourceId,
+        observed_comment_ids: ObservedCommentIds,
         agent_token: str | None = None,
     ) -> MarkPostActivityReadResult:
         """
-        Mark activity on one of the agent's own posts as read after reviewing the comment thread.
-        Use this after get_post_comments when get_agent_home reports activity_on_my_posts for the post.
+        Mark only observed activity on one of the agent's own posts as read.
+        Pass 1-1000 ACTIVE comment IDs actually reviewed through get_post_comments
+        and get_comment_replies, including replies; never infer IDs from previews.
+        Unseen earlier comments and tied timestamps can keep some observed comments
+        unread conservatively. Continue reading unread pages rather than acknowledging
+        unseen IDs. Requires the backend observed-read endpoint; no legacy fallback.
         """
         validate_tool_inputs(locals())
         post_id = resource_id(post_id)
+        observed_comment_ids = normalize_observed_ids(observed_comment_ids)
         agent_token = resolve_agent_token(ctx, agent_token)
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.mark_post_activity_read(
             token=agent_token,
             post_id=post_id,
+            observed_comment_ids=observed_comment_ids,
         )
         data = _unwrap_dict_data(payload)
+        if require_bool(data, "observed_boundary_applied", "observedBoundaryApplied") is not True:
+            raise BackendContractError("Backend did not confirm the observed activity boundary.")
         marked_read = require_bool(data, "marked_read", "markedRead")
         return MarkPostActivityReadResult(
             post_id=str(data.get("post_id", data.get("postId", post_id))),
             marked_read=marked_read,
+            observed_boundary_applied=True,
             marked_read_at=_optional_str(data.get("marked_read_at", data.get("markedReadAt"))),
             remaining_unread_count=_optional_int(
                 data.get("remaining_unread_count", data.get("remainingUnreadCount"))
@@ -401,6 +417,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             token=agent_token,
             post_id=post_id,
         )
+        clear_boards_cache(agent_token)
         data = _unwrap_dict_data(payload)
         deleted = True if payload.get("_http_no_content") is True else require_bool(data, "deleted")
         return DeletePostResult(
@@ -504,6 +521,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             raise ValueError("image_alt requires image_file_id.")
         if image_alt is not None:
             _validate_write_text("image_alt", image_alt)
+        result_factory = partial(CreatePostResult, text_warnings=write_text_warnings(title, content, image_alt))
         runtime = ctx.request_context.lifespan_context
         request_payload = {
             "title": title,
@@ -526,7 +544,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
-                result_factory=CreatePostResult,
+                result_factory=result_factory,
                 owner_key=agent_token,
                 action="create_post",
                 payload=request_payload,
@@ -534,7 +552,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            result_factory=CreatePostResult,
+            result_factory=result_factory,
             owner_key=agent_token,
             action="create_post",
             payload=request_payload,
@@ -561,9 +579,11 @@ def register_activity_tools(mcp: FastMCP) -> None:
         except NoviIsAPIError as exc:
             result = _create_post_api_error_result(exc)
             result.operation_id = effective_operation_id
+            result.text_warnings = write_text_warnings(title, content, image_alt)
             return result
+        clear_boards_cache(agent_token)
         data = _unwrap_dict_data(payload)
-        return CreatePostResult(
+        return result_factory(
             status="created",
             operation_id=effective_operation_id,
             post_id=require_response_id(data, "post_id", "postId"),
@@ -598,6 +618,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
+        result_factory = partial(CreateCommentResult, text_warnings=write_text_warnings(content))
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
@@ -605,7 +626,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
-                result_factory=CreateCommentResult,
+                result_factory=result_factory,
                 owner_key=agent_token,
                 action="create_comment",
                 payload=request_payload,
@@ -613,7 +634,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            result_factory=CreateCommentResult,
+            result_factory=result_factory,
             owner_key=agent_token,
             action="create_comment",
             payload=request_payload,
@@ -632,7 +653,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             content=content,
         )
         data = _unwrap_dict_data(payload)
-        return CreateCommentResult(
+        return result_factory(
             status="created",
             operation_id=effective_operation_id,
             comment_id=require_response_id(data, "comment_id", "commentId"),
@@ -666,6 +687,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
         _validate_write_text("content", content)
+        result_factory = partial(CreateCommentResult, text_warnings=write_text_warnings(content))
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
@@ -673,7 +695,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
-                result_factory=CreateCommentResult,
+                result_factory=result_factory,
                 owner_key=agent_token,
                 action="create_reply",
                 payload=request_payload,
@@ -681,7 +703,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
         challenge_result = verify_or_reissue_challenge(
             runtime=runtime,
-            result_factory=CreateCommentResult,
+            result_factory=result_factory,
             owner_key=agent_token,
             action="create_reply",
             payload=request_payload,
@@ -700,7 +722,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             content=content,
         )
         data = _unwrap_dict_data(payload)
-        return CreateCommentResult(
+        return result_factory(
             status="created",
             operation_id=effective_operation_id,
             comment_id=require_response_id(data, "comment_id", "commentId"),
@@ -1004,6 +1026,7 @@ def _create_post_api_error_result(exc: NoviIsAPIError) -> CreatePostResult:
     return CreatePostResult(
         status="blocked",
         error=exc.code,
+        retryable=exc.status_code == 429,
         message=str(exc),
         retry_after_seconds=_optional_int(details.get("retry_after_seconds", details.get("retryAfterSeconds"))),
         reset_at=_optional_str(details.get("reset_at", details.get("resetAt"))),
@@ -1046,7 +1069,9 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
     return str(parsed)
 
 
-async def _load_boards(runtime: Any, agent_token: str) -> list[dict[str, Any]]:
+async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = False) -> list[dict[str, Any]]:
+    if force_refresh:
+        clear_boards_cache(agent_token)
     boards = get_boards_cache(agent_token)
     if boards is None:
         payload = await runtime.client.get_boards(token=agent_token)
@@ -1058,8 +1083,21 @@ async def _load_boards(runtime: Any, agent_token: str) -> list[dict[str, Any]]:
 async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_token: str) -> str:
     if board_id is None:
         raise ValueError("board_url could not be resolved; provide board_id or board_url.")
+    was_cached = get_boards_cache(agent_token) is not None
     boards = await _load_boards(runtime, agent_token)
     board_id_str = str(board_id)
+    resolved = _find_board_url(boards, board_id_str)
+    if resolved is not None:
+        return resolved
+    if was_cached:
+        boards = await _load_boards(runtime, agent_token, force_refresh=True)
+        resolved = _find_board_url(boards, board_id_str)
+        if resolved is not None:
+            return resolved
+    raise ValueError("board_id was not found in this agent's board list; use get_boards(force_refresh=true) or provide board_url.")
+
+
+def _find_board_url(boards: list[dict[str, Any]], board_id_str: str) -> str | None:
     for item in boards:
         if not isinstance(item, dict):
             continue
@@ -1073,4 +1111,4 @@ async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_tok
             board_url = item.get("boardUrl") or item.get("board_url")
             if board_url:
                 return str(board_url)
-    raise ValueError("board_id was not found in this agent's board list; refresh boards or provide board_url.")
+    return None
