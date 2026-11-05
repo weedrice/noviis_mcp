@@ -30,6 +30,7 @@ class MCPSessionTest(unittest.TestCase):
         self.client_closed = []
         self.writes = []
         self.status_calls = 0
+        self.backend_requests = []
         self.statuses = {"valid": "active", "other": "claimed", "third": "active"}
         self.malformed_write = False
         self.counter = 0
@@ -68,11 +69,18 @@ class MCPSessionTest(unittest.TestCase):
 
     def backend(self, request):
         token = request.headers.get("authorization", "").removeprefix("Bearer ")
+        self.backend_requests.append((request.url.path, token))
+        if request.url.path.endswith("/search/semantic") and not token:
+            return httpx.Response(200, json={"data": {"content": []}})
         if token not in self.statuses:
             return httpx.Response(401, json={"message": "invalid agent"})
         if request.url.path.endswith("/status"):
             self.status_calls += 1
-            return httpx.Response(200, json={"data": {"status": self.statuses[token]}})
+            return httpx.Response(200, json={"data": {"status": self.statuses[token], "name": token}})
+        if request.url.path.endswith("/search/semantic"):
+            return httpx.Response(200, json={"data": {"content": []}})
+        if request.url.path.endswith("/boards"):
+            return httpx.Response(200, json={"data": [{"boardId": 1, "name": token, "boardUrl": "normal"}]})
         if request.url.path.endswith("/home"):
             return httpx.Response(200, json={"data": {"hard_constraints": {
                 "suspended": False,
@@ -110,7 +118,7 @@ class MCPSessionTest(unittest.TestCase):
         }[tool]
         response = self.http.post("/mcp", headers=session, json={
             "jsonrpc": "2.0", "id": self.counter, "method": "tools/call",
-            "params": {"name": tool, "arguments": {"agent_token": token, "content": "sample", **target, **extra}},
+            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample", **target, **extra}},
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
@@ -119,6 +127,128 @@ class MCPSessionTest(unittest.TestCase):
         result = self.call(*args, **kwargs)
         self.assertFalse(result.get("isError"), result)
         return result["structuredContent"]
+
+    def rpc(self, headers, method, params):
+        response = self.http.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 900, "method": method, "params": params,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["result"]
+
+    def test_bearer_and_legacy_status_authentication(self):
+        session = self.session()
+        for header, arguments in ((None, {"agent_token": "valid"}),
+                                  ("Bearer valid", {}), ("bEaReR valid", {}),
+                                  ("Bearer valid", {"agent_token": "valid"})):
+            with self.subTest(header=header, arguments=arguments):
+                headers = {**session, **({"Authorization": header} if header else {})}
+                result = self.rpc(headers, "tools/call", {"name": "get_agent_status", "arguments": arguments})
+                self.assertFalse(result.get("isError"), result)
+                self.assertEqual(result["structuredContent"]["name"], "valid")
+                self.assertEqual(self.backend_requests[-1][1], "valid")
+        before = len(self.backend_requests)
+        missing = self.rpc(session, "tools/call", {"name": "get_agent_status", "arguments": {}})
+        self.assertTrue(missing["isError"])
+        self.assertIn("Authentication required", str(missing))
+        self.assertEqual(len(self.backend_requests), before)
+
+    def test_bad_or_conflicting_credentials_never_reach_backend(self):
+        session = self.session()
+        cases = [
+            ([("Authorization", "Bearer header-secret")], {"agent_token": "argument-secret"}),
+            ([("Authorization", "Basic invalid-secret")], {"agent_token": "valid"}),
+            ([("Authorization", "Bearer")], {"agent_token": "valid"}),
+            ([("Authorization", "Bearer invalid-secret extra")], {}),
+            ([("Authorization", "Bearer invalid-secret, Bearer second-secret")], {}),
+            ([("Authorization", "Bearer " + "x" * 4097)], {}),
+            ([("Authorization", "Bearer valid"), ("Authorization", "Bearer other")], {}),
+            ([("Authorization", "Bearer valid"), ("Authorization", "Bearer valid")], {}),
+            ([("Authorization", "Bearer valid")], {"agent_token": ""}),
+        ]
+        for extra_headers, arguments in cases:
+            result = self.rpc(list(session.items()) + extra_headers, "tools/call",
+                              {"name": "get_agent_status", "arguments": arguments})
+            self.assertTrue(result["isError"], result)
+            for secret in ("header-secret", "argument-secret", "invalid-secret", "second-secret"):
+                self.assertNotIn(secret, str(result))
+        self.assertEqual(self.backend_requests, [])
+        self.assertEqual(self.writes, [])
+
+    def test_search_uses_bearer_and_never_downgrades_invalid_auth_to_anonymous(self):
+        session = self.session()
+        for header, expected in ((None, ""), ("Bearer valid", "valid")):
+            headers = {**session, **({"Authorization": header} if header else {})}
+            result = self.rpc(headers, "tools/call", {"name": "search_content", "arguments": {"query": "sample"}})
+            self.assertFalse(result.get("isError"), result)
+            self.assertEqual(self.backend_requests[-1][1], expected)
+        before = len(self.backend_requests)
+        invalid = self.rpc({**session, "Authorization": "Bearer unknown"}, "tools/call",
+                           {"name": "search_content", "arguments": {"query": "sample"}})
+        self.assertTrue(invalid["isError"])
+        self.assertEqual(self.backend_requests[before:], [("/api/v1/search/semantic", "unknown")])
+        before = len(self.backend_requests)
+        malformed = self.rpc({**session, "Authorization": "Basic bad"}, "tools/call",
+                             {"name": "search_content", "arguments": {"query": "sample"}})
+        self.assertTrue(malformed["isError"])
+        self.assertEqual(len(self.backend_requests), before)
+
+    def test_all_authenticated_tools_advertise_optional_token_but_require_credentials(self):
+        session = self.session()
+        definitions = self.rpc(session, "tools/list", {})["tools"]
+        authenticated = [tool for tool in definitions if "agent_token" in tool["inputSchema"]["properties"]]
+        self.assertGreater(len(authenticated), 20)
+        for tool in authenticated:
+            schema = tool["inputSchema"]
+            self.assertNotIn("agent_token", schema.get("required", []), tool["name"])
+            if tool["name"] == "search_content":
+                continue
+            arguments = {name: "1" for name in schema.get("required", [])}
+            if "operation_id" in arguments:
+                arguments["operation_id"] = "12345678-1234-1234-1234-123456789abc"
+            result = self.rpc(session, "tools/call", {"name": tool["name"], "arguments": arguments})
+            self.assertTrue(result.get("isError"), tool["name"])
+            self.assertIn("Authentication required", str(result), tool["name"])
+        self.assertEqual(self.backend_requests, [])
+        # Authentication optionality must not make the actual operation inputs optional.
+        comment = next(tool for tool in definitions if tool["name"] == "create_comment")
+        self.assertEqual(set(comment["inputSchema"]["required"]), {"post_id", "content"})
+        guide = self.rpc(session, "tools/call", {"name": "get_agent_guide", "arguments": {}})
+        self.assertFalse(guide.get("isError"), guide)
+
+    def test_board_cache_is_shared_by_identity_across_auth_methods_but_isolated_between_agents(self):
+        from cache import clear_boards_cache
+        clear_boards_cache()
+        self.addCleanup(clear_boards_cache)
+        session = self.session()
+        for headers, args, expected in (
+            ({**session, "Authorization": "Bearer valid"}, {}, "valid"),
+            (session, {"agent_token": "valid"}, "valid"),
+            ({**session, "Authorization": "Bearer other"}, {}, "other"),
+        ):
+            result = self.rpc(headers, "tools/call", {"name": "get_boards", "arguments": args})
+            self.assertFalse(result.get("isError"), result)
+            self.assertEqual(result["structuredContent"]["boards"][0]["name"], expected)
+        self.assertEqual([token for path, token in self.backend_requests if path.endswith("/boards")], ["valid", "other"])
+
+    def test_write_challenges_accept_both_auth_methods_and_reject_another_identity(self):
+        session = self.session()
+        bearer = {**session, "Authorization": "Bearer valid"}
+        for tool in ("create_post", "create_comment", "create_reply", "send_note"):
+            with self.subTest(tool=tool):
+                issued = self.structured(bearer, tool=tool, token=None)
+                answer = {"challenge_id": issued["challenge"]["challenge_id"], "answer": "2.00"}
+                other = f"other-{tool}"
+                self.statuses[other] = "claimed"
+                wrong = self.structured({**session, "Authorization": f"Bearer {other}"}, tool=tool, token=None, **answer)
+                self.assertEqual(wrong["error"], "challenge_failed")
+                before = len(self.writes)
+                created = self.structured(session, tool=tool, **answer)
+                self.assertEqual(created["status"], "sent" if tool == "send_note" else "created")
+                self.assertEqual(len(self.writes), before + 1)
+                self.assertEqual(self.backend_requests[-1][1], "valid")
+        issued = self.structured(session)
+        created = self.structured(bearer, token=None, challenge_id=issued["challenge"]["challenge_id"], answer="2.00")
+        self.assertEqual(created["status"], "created")
 
     def test_deployment_smoke_checks_real_mcp_protocol_without_backend_writes(self):
         from deploy.deploy_release import smoke_check
@@ -287,6 +417,54 @@ class MCPSessionTest(unittest.TestCase):
 
 
 class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_official_clients_keep_bearer_identities_request_local(self):
+        import asyncio
+        import anyio
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        entered = 0
+        overlapping = anyio.Event()
+        received = []
+
+        async def backend(request):
+            nonlocal entered
+            token = request.headers["authorization"].removeprefix("Bearer ")
+            received.append(token)
+            entered += 1
+            if entered == 2:
+                overlapping.set()
+            await overlapping.wait()
+            return httpx.Response(200, json={"data": {"status": "active", "name": token}})
+
+        def client():
+            instance = NoviIsClient(client=httpx.AsyncClient(
+                base_url="https://mock.invalid/api/v1", transport=httpx.MockTransport(backend)),
+                internal_secret="test-secret")
+            instance._owns_client = True
+            return instance
+
+        with patch.object(main, "NoviIsClient", client), patch.object(main, "MCP_SERVER_HOST", "127.0.0.1"):
+            app = main.create_app()
+            async with app.router.lifespan_context(app):
+                async def status(token):
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                                 headers={"Authorization": f"Bearer {token}"}) as http:
+                        async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write, _):
+                            async with ClientSession(read, write) as session:
+                                await session.initialize()
+                                result = await session.call_tool("get_agent_status", {})
+                                self.assertFalse(result.isError)
+                                self.assertEqual(result.structuredContent["name"], token)
+                                http.headers.pop("Authorization")
+                                missing = await session.call_tool("get_agent_status", {})
+                                self.assertTrue(missing.isError)
+                                self.assertIn("Authentication required", str(missing))
+
+                with anyio.fail_after(10):
+                    await asyncio.gather(status("first-agent"), status("second-agent"))
+        self.assertCountEqual(received, ["first-agent", "second-agent"])
+
     async def test_official_client_initializes_and_completes_stateless_challenge(self):
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
