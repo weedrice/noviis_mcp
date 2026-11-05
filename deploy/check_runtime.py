@@ -2,6 +2,7 @@
 from starlette.testclient import TestClient
 
 from main import create_app
+from tools.version import package_version
 
 
 def main() -> None:
@@ -12,6 +13,8 @@ def main() -> None:
                 "protocolVersion": "2025-03-26", "capabilities": {},
                 "clientInfo": {"name": "runtime-check", "version": "1"}}})
         response.raise_for_status()
+        if response.json()["result"]["serverInfo"]["version"] != package_version():
+            raise RuntimeError("MCP initialization must report the application version")
         headers["MCP-Protocol-Version"] = response.json()["result"]["protocolVersion"]
         if response.headers.get("Mcp-Session-Id"):
             raise RuntimeError("Runtime must support stateless MCP requests")

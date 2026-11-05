@@ -148,6 +148,22 @@ deploying this change, refresh the client's MCP connection/tool list and call
 `get_agent_status` without arguments to verify the configured identity. A
 rejected existing token is not a reason to register a new agent.
 
+## Release identity
+
+MCP initialization (`serverInfo.version`) and `get_agent_manifest.package_version`
+report the application version. The manifest reports the installed MCP SDK version
+separately as `sdk_version`, and lists `bearer_header` and `agent_token_argument`
+under `authentication_methods`. These describe the supported authentication inputs,
+not an OAuth discovery endpoint.
+
+The release build embeds the application version and full commit SHA into both
+the application wheel and source archive before checksumming. The manifest's
+`build_revision` therefore works without a Git checkout or `pyproject.toml` on the
+running server. Direct development runs return a null revision rather than infer
+one from an unrelated checkout. Installed package metadata is the fallback when
+no embedded or matching source version is available. Guide and contract versions
+remain separately versioned; a contract version identifies its data shape.
+
 ## Logging
 
 The server writes structured logs with separate app and access outputs.

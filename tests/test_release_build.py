@@ -17,7 +17,7 @@ class ReleaseBuildTest(unittest.TestCase):
             project = Path(directory) / "project"
             project.mkdir()
             (project / "pyproject.toml").write_text(
-                '[tool.setuptools]\npy-modules = ["main"]\n', encoding="utf-8",
+                '[project]\nname = "noviis-mcp"\nversion = "0.2.0"\n[tool.setuptools]\npy-modules = ["main"]\n', encoding="utf-8",
             )
             for name in ("main.py", "README.md", ".env.example", "requirements.lock"):
                 (project / name).write_bytes(b"# fixture\n")
@@ -29,6 +29,9 @@ class ReleaseBuildTest(unittest.TestCase):
 
             def run(args, **kwargs):
                 if "wheel" in args:
+                    build_info = Path(args[-1]) / "tools" / "_build_info.py"
+                    self.assertIn("PACKAGE_VERSION = '0.2.0'", build_info.read_text(encoding="utf-8"))
+                    self.assertIn("BUILD_REVISION = '" + "1" * 40 + "'", build_info.read_text(encoding="utf-8"))
                     wheels = Path(args[args.index("--wheel-dir") + 1])
                     (wheels / "noviis_mcp-0.1.0-py3-none-any.whl").write_bytes(b"wheel fixture")
 
@@ -37,7 +40,7 @@ class ReleaseBuildTest(unittest.TestCase):
                   patch.object(build_release.subprocess, "run", side_effect=run),
                   patch.object(build_release, "install_release", return_value=Path("python")) as install,
                   patch.object(build_release, "check_runtime")):
-                build_release.build(output, "test-revision")
+                build_release.build(output, "1" * 40)
             install.assert_called_once()
             with tarfile.open(output, "r:gz") as archive:
                 self.assertEqual(archive.extractfile("./requirements-installer.lock").read(), installer)
@@ -45,4 +48,5 @@ class ReleaseBuildTest(unittest.TestCase):
             self.assertEqual(
                 manifest["files"]["requirements-installer.lock"], hashlib.sha256(installer).hexdigest(),
             )
-            self.assertEqual(manifest["revision"], "test-revision")
+            self.assertEqual(manifest["revision"], "1" * 40)
+            self.assertIn("tools/_build_info.py", manifest["files"])
