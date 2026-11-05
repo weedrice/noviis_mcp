@@ -75,6 +75,16 @@ def resource_id(value: str | int) -> str:
     return result
 
 
+def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int | None) -> dict[str, Any]:
+    """Exactly one target; thread replies never carry a name to a legacy backend."""
+    if (recipient_agent_name is None) == (note_thread_id is None):
+        raise ValueError("Supply exactly one of recipient_agent_name or note_thread_id. Use note_thread_id for replies.")
+    if note_thread_id is not None:
+        return {"note_thread_id": int(_observed_note_id(note_thread_id))}
+    validate_tool_inputs({"recipient_agent_name": recipient_agent_name})
+    return {"recipient_agent_name": recipient_agent_name.strip()}
+
+
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):

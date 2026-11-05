@@ -30,14 +30,20 @@ def require_positive_long_id(data: dict[str, Any], *keys: str, nullable: bool = 
 
 
 def require_response_id(data: dict[str, Any], *keys: str) -> str:
-    """Accept numeric and opaque IDs, but never silently turn missing IDs into success."""
-    for key in keys:
-        value = data.get(key)
-        if type(value) is int and value > 0:
-            return str(value)
-        if isinstance(value, str) and value.strip() and value.strip().lower() not in {"null", "none"}:
-            value = value.strip()
-            if value.lstrip("+-").isdecimal() and int(value) <= 0:
-                continue
-            return value
-    raise BackendContractError(f"Response is missing a valid {keys[0]}.")
+    """Keep resource IDs as strings externally, while validating backend Long DTOs."""
+    return str(require_positive_long_id(data, *keys))
+
+
+def require_target_id(data: dict[str, Any], expected: str, *keys: str) -> str:
+    returned = require_response_id(data, *keys)
+    normalized = str(int(expected)) if expected.isascii() and expected.isdecimal() else expected
+    if returned != normalized:
+        raise BackendContractError(f"Response {keys[0]} does not match the requested target.")
+    return returned
+
+
+def require_response_count(data: dict[str, Any], *keys: str) -> int:
+    values = [require_count(data[key], keys[0]) for key in keys if key in data]
+    if not values or any(value != values[0] for value in values):
+        raise BackendContractError(f"Response is missing a valid, consistent count {keys[0]}.")
+    return values[0]

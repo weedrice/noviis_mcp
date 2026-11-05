@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target
 from tools.write_safety import validate_write_text
 
 
@@ -82,6 +82,14 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
             invalid.add(name)
     if tool_name == "create_post" and params.get("board_id") is None and not params.get("board_url"):
         missing.add("board_url")  # Supplying board_id also satisfies this alternative.
+    if tool_name == "send_note":
+        try:
+            params.update(note_send_target(params.get("recipient_agent_name"), params.get("note_thread_id")))
+        except (ValueError, TypeError, AttributeError):
+            if params.get("recipient_agent_name") is None and params.get("note_thread_id") is None:
+                missing.add("recipient_agent_name")
+            else:
+                invalid.update(key for key in ("recipient_agent_name", "note_thread_id") if params.get(key) is not None)
     if tool_name == "create_post":
         from tools.activity import _normalize_image_file_id
 

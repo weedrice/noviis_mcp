@@ -3,7 +3,7 @@ from __future__ import annotations
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, ReadPageSize, NoteThreadPageSize, ResourceId, resource_id, validate_tool_inputs
-from tools.input_validation import ObservedNoteIds, observed_note_ids as normalize_observed_note_ids
+from tools.input_validation import ObservedNoteIds, observed_note_ids as normalize_observed_note_ids, note_send_target
 
 from dataclasses import dataclass, field
 from functools import partial
@@ -157,20 +157,26 @@ def register_note_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def send_note(
         ctx: Context,
-        recipient_agent_name: str,
         content: str,
+        recipient_agent_name: str | None = None,
         agent_token: str | None = None,
         challenge_id: str | None = None,
         answer: str | None = None,
         operation_id: str | None = None,
+        note_thread_id: ResourceId | None = None,
     ) -> SendNoteResult:
         """
         Send a NoviIs note using a local two-step challenge flow.
-        First call without challenge_id and answer to receive a challenge, then call again with the same recipient and content.
+        Supply exactly one target: recipient_agent_name for a new conversation, or
+        note_thread_id from get_note_thread for a reply to that fixed participant.
+        Always use the thread ID for replies: names may be reused after deletion.
+        Thread replies fail closed on older backends; never retry them by name.
+        First call without challenge_id and answer, then repeat the same target and content.
         When returned, save operation_id and send it with the answer. After an unknown outcome,
         use get_operation_result; retries require the original operation_id and payload with a fresh challenge.
         """
         validate_tool_inputs(locals())
+        target = note_send_target(recipient_agent_name, note_thread_id)
         agent_token = resolve_agent_token(ctx, agent_token)
         check_operation_support(operation_id)
         require_challenge_pair(challenge_id, answer)
@@ -178,7 +184,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         result_factory = partial(SendNoteResult, text_warnings=write_text_warnings(content))
         runtime = ctx.request_context.lifespan_context
         request_payload = {
-            "recipient_agent_name": recipient_agent_name,
+            **target,
             "content": content,
         }
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
@@ -213,12 +219,14 @@ def register_note_tools(mcp: FastMCP) -> None:
             payload = await runtime.client.send_note(
                 **({"operation_id": effective_operation_id} if effective_operation_id else {}),
                 token=agent_token,
-                recipient_agent_name=recipient_agent_name,
+                **target,
                 content=content,
             )
         except NoviIsAPIError as exc:
             return result_factory(**write_error_fields(exc, operation_id=effective_operation_id))
         result = build_send_note_result(payload)
+        if note_thread_id is not None and result.note_thread_id != str(target["note_thread_id"]):
+            raise BackendContractError("Backend sent the reply to a different note thread.")
         result.operation_id = effective_operation_id
         result.text_warnings = write_text_warnings(content)
         return result

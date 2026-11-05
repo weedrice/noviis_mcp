@@ -13,7 +13,7 @@ from typing import Any
 from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
-from cache import clear_boards_cache, get_boards_cache, set_boards_cache
+from cache import begin_boards_load, finish_boards_load, clear_boards_cache, get_boards_cache, set_boards_cache
 from pydantic import StrictBool
 from config import INJECTION_WARNING
 from exceptions import BackendContractError, NoviIsAPIError
@@ -37,7 +37,7 @@ from tools.parsing import (
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
 from tools.write_errors import write_error_fields
-from tools.response_contract import require_response_id, require_bool, require_count
+from tools.response_contract import (require_response_id, require_bool, require_response_count, require_target_id)
 from tools.content_safety import content_warnings
 
 
@@ -397,14 +397,14 @@ def register_activity_tools(mcp: FastMCP) -> None:
         if require_bool(data, "observed_boundary_applied", "observedBoundaryApplied") is not True:
             raise BackendContractError("Backend did not confirm the observed activity boundary.")
         marked_read = require_bool(data, "marked_read", "markedRead")
+        if not marked_read:
+            raise BackendContractError("Backend did not confirm observed activity acknowledgement.")
         return MarkPostActivityReadResult(
-            post_id=str(data.get("post_id", data.get("postId", post_id))),
+            post_id=require_target_id(data, post_id, "post_id", "postId"),
             marked_read=marked_read,
             observed_boundary_applied=True,
             marked_read_at=_optional_str(data.get("marked_read_at", data.get("markedReadAt"))),
-            remaining_unread_count=_optional_int(
-                data.get("remaining_unread_count", data.get("remainingUnreadCount"))
-            ),
+            remaining_unread_count=require_response_count(data, "remaining_unread_count", "remainingUnreadCount"),
         )
 
     @mcp.tool()
@@ -428,12 +428,16 @@ def register_activity_tools(mcp: FastMCP) -> None:
         )
         clear_boards_cache(agent_token)
         data = _unwrap_dict_data(payload)
-        deleted = True if payload.get("_http_no_content") is True else require_bool(data, "deleted")
+        no_content = payload.get("_http_no_content") is True
+        deleted = True if no_content else require_bool(data, "deleted")
+        confirmed_post_id = post_id if no_content else require_target_id(data, post_id, "post_id", "postId")
+        already_deleted = (require_bool(data, "already_deleted", "alreadyDeleted")
+                           if any(key in data for key in ("already_deleted", "alreadyDeleted")) else None)
         return DeletePostResult(
             status="deleted" if deleted else "not_deleted",
-            post_id=str(data.get("post_id", data.get("postId", post_id))),
+            post_id=confirmed_post_id,
             deleted=deleted,
-            already_deleted=_optional_bool(data.get("already_deleted", data.get("alreadyDeleted"))),
+            already_deleted=already_deleted,
             deleted_at=_optional_str(data.get("deleted_at", data.get("deletedAt"))),
         )
 
@@ -760,11 +764,11 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.like_post(token=agent_token, post_id=post_id)
         data = _unwrap_dict_data(payload)
-        liked = require_bool(data, "isLiked", "liked", "is_liked") if any(key in data for key in ("isLiked", "liked", "is_liked")) else True
+        liked = require_bool(data, "isLiked", "liked", "is_liked")
         return LikePostResult(
             status="liked" if liked else "not_liked",
-            post_id=post_id,
-            like_count=_extract_like_count(payload),
+            post_id=require_target_id(data, post_id, "postId", "post_id"),
+            like_count=require_response_count(data, "likeCount", "like_count"),
         )
 
     @mcp.tool()
@@ -779,11 +783,13 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         payload = await runtime.client.like_comment(token=agent_token, comment_id=comment_id)
         data = _unwrap_dict_data(payload)
+        if data.get("status") != "liked":
+            raise BackendContractError("Backend did not confirm the comment like status.")
         return LikeCommentResult(
-            status=str(data.get("status", "liked")),
-            comment_id=str(data.get("comment_id", data.get("commentId", comment_id))),
-            like_count=_extract_like_count(payload),
-            already_liked=_optional_bool(data.get("already_liked", data.get("alreadyLiked"))),
+            status="liked",
+            comment_id=require_target_id(data, comment_id, "comment_id", "commentId"),
+            like_count=require_response_count(data, "like_count", "likeCount"),
+            already_liked=require_bool(data, "already_liked", "alreadyLiked"),
         )
 
 
@@ -959,15 +965,6 @@ def _sanitize_comment_tree(item: dict[str, Any]) -> tuple[Comment | None, int]:
     return _to_comment(item, replies=replies), filtered_count
 
 
-def _extract_like_count(payload: dict[str, Any]) -> int:
-    data = _unwrap_dict_data(payload)
-    if "likeCount" in data or "like_count" in data:
-        value = data.get("likeCount", data.get("like_count"))
-    else:
-        value = payload.get("data", payload.get("result"))
-    return require_count(value, "like_count")
-
-
 def _derive_has_next(data: dict[str, Any]) -> bool | None:
     if "hasNext" in data:
         return bool(data["hasNext"])
@@ -1053,15 +1050,15 @@ def _decode_post_image(image_base64: str) -> bytes:
 
 
 def _normalize_image_file_id(image_file_id: str | None) -> str | None:
-    if image_file_id is None or not image_file_id.strip():
+    if image_file_id is None or (isinstance(image_file_id, str) and not image_file_id.strip()):
         return None
-    try:
-        parsed = int(image_file_id)
-    except ValueError as exc:
-        raise ValueError("image_file_id must be a positive integer.") from exc
-    if parsed <= 0:
-        raise ValueError("image_file_id must be a positive integer.")
-    return str(parsed)
+    if (not isinstance(image_file_id, str) or not image_file_id.isascii()
+            or not image_file_id.isdecimal()):
+        raise ValueError("image_file_id must be a positive decimal Long.")
+    normalized = image_file_id.lstrip("0")
+    if not normalized or len(normalized) > 19 or int(normalized) > 9_223_372_036_854_775_807:
+        raise ValueError("image_file_id must be a positive decimal Long.")
+    return normalized
 
 
 async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = False) -> list[dict[str, Any]]:
@@ -1069,9 +1066,13 @@ async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = 
         clear_boards_cache(agent_token)
     boards = get_boards_cache(agent_token)
     if boards is None:
-        payload = await runtime.client.get_boards(token=agent_token)
-        boards = _unwrap_list_data(payload, nested_key="boards")
-        set_boards_cache(boards, agent_token=agent_token)
+        ticket = begin_boards_load(agent_token)
+        try:
+            payload = await runtime.client.get_boards(token=agent_token)
+            boards = _unwrap_list_data(payload, nested_key="boards")
+            set_boards_cache(boards, agent_token=agent_token, load_ticket=ticket)
+        finally:
+            finish_boards_load(ticket)
     return boards
 
 

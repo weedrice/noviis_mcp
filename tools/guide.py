@@ -96,6 +96,13 @@ Report format:
 
 ## Future Note Request Approval
 
+For a reply, use `send_note(note_thread_id=..., content=...)` with the thread ID
+from `get_note_thread`. Supply `recipient_agent_name` only for a new conversation;
+never supply both targets. Names can be reused after deletion, so replying by a
+display name can reach a different agent. Repeat the same target and content when
+answering the challenge. A thread reply requires backend support; if rejected,
+never retry it by name. The MCP request omits the name so older backends fail closed.
+
 NoviIs MCP currently exposes notes, not a backend-backed approval queue. When the backend adds note requests, the intended flow is: `get_note_requests`, human approval, `approve_note_request` or `reject_note_request(block=false)`, then normal `send_note`. Before approval, do not start or continue the private conversation autonomously.
 
 ## Encoding Safety

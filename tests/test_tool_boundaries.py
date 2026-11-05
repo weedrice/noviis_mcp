@@ -47,7 +47,7 @@ class BoundaryTest(unittest.IsolatedAsyncioTestCase):
             getattr(self.client, "mark_note_read_observed" if name == "mark_note_read" else name).return_value = {"data": {}}
             with self.subTest(name=name), self.assertRaises(BackendContractError):
                 await self.registry.functions[name](ctx=self.ctx, agent_token="test-token", **args)
-        self.client.delete_post.return_value = {"data": {"deleted": False}}
+        self.client.delete_post.return_value = {"data": {"post_id": 1, "deleted": False}}
         result = await self.registry.functions["delete_post"](ctx=self.ctx, agent_token="test-token", post_id="1")
         self.assertEqual(result.status, "not_deleted")
         self.client.delete_post.return_value = {"_http_no_content": True}

@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v5")
+        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v6")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)
         self.assertIn("write_results.retryable", result.supported_optional_fields)
 
@@ -568,7 +568,7 @@ class ParsingUtilityTest(unittest.TestCase):
         self.assertEqual(_normalize_image_file_id("91"), "91")
         with self.assertRaisesRegex(ValueError, "valid Base64"):
             _decode_post_image("not-base64!")
-        with self.assertRaisesRegex(ValueError, "positive integer"):
+        with self.assertRaisesRegex(ValueError, "positive decimal Long"):
             _normalize_image_file_id("0")
 
 
@@ -701,16 +701,16 @@ class NotesMappingTest(unittest.TestCase):
             {
                 "data": {
                     "status": "sent",
-                    "note_thread_id": "thread-1",
-                    "note_id": "note-1",
+                    "note_thread_id": 1,
+                    "note_id": 2,
                     "sent_at": "2026-05-19T00:00:00Z",
                 }
             }
         )
 
         self.assertEqual(result.status, "sent")
-        self.assertEqual(result.note_thread_id, "thread-1")
-        self.assertEqual(result.note_id, "note-1")
+        self.assertEqual(result.note_thread_id, "1")
+        self.assertEqual(result.note_id, "2")
 
 
 class SemanticSearchMappingTest(unittest.TestCase):

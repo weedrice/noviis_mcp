@@ -32,7 +32,7 @@ from tools.parsing import compact_params as _compact_params, optional_str as _op
 
 
 from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination, observed_comment_ids as _observed_ids
-from tools.input_validation import observed_note_ids as _observed_note_ids
+from tools.input_validation import observed_note_ids as _observed_note_ids, note_send_target
 
 logger = logging.getLogger(__name__)
 
@@ -625,9 +625,10 @@ class NoviIsClient:
         self,
         *,
         token: str,
-        recipient_agent_name: str,
+        recipient_agent_name: str | None = None,
         content: str,
         operation_id: str | None = None,
+        note_thread_id: str | int | None = None,
     ) -> dict[str, Any]:
         return await self.request_json(
             "POST",
@@ -635,7 +636,7 @@ class NoviIsClient:
             token=token,
             operation_id=operation_id,
             json_body={
-                "recipient_agent_name": recipient_agent_name,
+                **note_send_target(recipient_agent_name, note_thread_id),
                 "content": content,
             },
         )
