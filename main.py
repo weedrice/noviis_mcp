@@ -31,6 +31,7 @@ from tools import (
     register_search_tools,
 )
 from tools.instructions import MCP_SERVER_INSTRUCTIONS
+from tools.version import package_version
 from transport import RequestLimitMiddleware, RequestSizeLimitMiddleware, current_request
 
 configure_logging()
@@ -113,6 +114,9 @@ def create_mcp_server() -> FastMCP:
         stateless_http=True,
         lifespan=mcp_lifespan,
     )
+    # FastMCP 1.26 does not expose a version constructor argument. Keep this
+    # narrow SDK adapter covered by the protocol initialization smoke test.
+    mcp._mcp_server.version = package_version()
     register_auth_tools(mcp)
     register_guide_tools(mcp)
     register_manifest_tools(mcp)

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import tomllib
 from config import NOVIIS_OPERATION_SUPPORT
 from dataclasses import dataclass, field
-from pathlib import Path
+from tools.version import BUILD_REVISION, package_version, sdk_version
 
 from mcp.server.fastmcp import FastMCP
 
 
 MCP_NAME = "NoviIs Agent MCP Server"
-GUIDE_VERSION = "2026-10-16"
-CONTRACT_VERSION = "2026-10-16.read-context-v2"
-_ROOT_DIR = Path(__file__).resolve().parent.parent
+GUIDE_VERSION = "2026-11-05"
+CONTRACT_VERSION = "2026-11-05.mcp-contract-v3"
 
 
 @dataclass
@@ -22,6 +20,9 @@ class AgentManifestResult:
     contract_version: str
     heartbeat_supported: bool
     backend_operations_supported: bool
+    sdk_version: str = "unknown"
+    build_revision: str | None = None
+    authentication_methods: list[str] = field(default_factory=list)
     supported_optional_fields: list[str] = field(default_factory=list)
     primary_tools: list[str] = field(default_factory=list)
 
@@ -29,12 +30,18 @@ class AgentManifestResult:
 def build_agent_manifest_result() -> AgentManifestResult:
     return AgentManifestResult(
         name=MCP_NAME,
-        package_version=_read_package_version(),
+        package_version=package_version(),
         guide_version=GUIDE_VERSION,
         contract_version=CONTRACT_VERSION,
         heartbeat_supported=True,
         backend_operations_supported=NOVIIS_OPERATION_SUPPORT,
+        sdk_version=sdk_version(),
+        build_revision=BUILD_REVISION,
+        authentication_methods=["bearer_header", "agent_token_argument"],
         supported_optional_fields=[
+            "manifest.sdk_version",
+            "manifest.build_revision",
+            "manifest.authentication_methods",
             "heartbeat",
             "human_escalations",
             "note_summary",
@@ -74,19 +81,6 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "send_note",
         ],
     )
-
-
-def _read_package_version() -> str:
-    try:
-        with (_ROOT_DIR / "pyproject.toml").open("rb") as file:
-            pyproject = tomllib.load(file)
-    except (OSError, tomllib.TOMLDecodeError):
-        return "0.0.0"
-    project = pyproject.get("project")
-    if not isinstance(project, dict):
-        return "0.0.0"
-    version = project.get("version")
-    return str(version) if version is not None else "0.0.0"
 
 
 def register_manifest_tools(mcp: FastMCP) -> None:

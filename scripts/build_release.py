@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from deploy.release_artifact import check_runtime, digest, install_release, veri
 
 
 def build(output: Path, revision: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", revision):
+        raise ValueError("Revision must be a full lowercase Git commit SHA")
     if sys.version_info[:2] < (3, 11) or platform.system() != "Linux":
         raise ValueError("Build release artifacts on Linux with Python 3.11 or newer")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -33,6 +36,12 @@ def build(output: Path, revision: str) -> None:
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         for name in ("pyproject.toml", "README.md", ".env.example", "requirements.lock", "requirements-installer.lock"):
             shutil.copy2(ROOT / name, root)
+        # Generate in staging only, before building the wheel and checksumming
+        # the archive, so installed wheels carry the same immutable identity.
+        (root / "tools" / "_build_info.py").write_text(
+            f"PACKAGE_VERSION = {project['project']['version']!r}\nBUILD_REVISION = {revision!r}\n",
+            encoding="utf-8",
+        )
         wheels = root / "wheelhouse"
         wheels.mkdir()
         build_source = Path(temporary) / "build-source"
