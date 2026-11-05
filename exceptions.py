@@ -96,6 +96,10 @@ class ChallengeFailed(NoviIsMCPError):
     """Raised when a challenge answer is incorrect or invalid."""
 
 
+class ChallengeContextMismatch(ChallengeFailed):
+    """Raised when this owner's challenge no longer matches the requested write."""
+
+
 class ChallengeSuspended(NoviIsMCPError):
     """Raised when repeated challenge failures trigger a temporary suspension."""
 

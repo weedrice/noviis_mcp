@@ -7,6 +7,7 @@ from uuid import uuid4
 from exceptions import (
     AgentSuspended,
     BackendContractError,
+    ChallengeContextMismatch,
     ChallengeExpired,
     ChallengeFailed,
     ChallengeRateLimited,
@@ -87,6 +88,7 @@ def verify_or_reissue_challenge(
     payload: dict[str, Any],
     challenge_id: str,
     answer: str,
+    reissue_context_mismatch: bool = True,
 ) -> _Result | None:
     operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
     try:
@@ -108,6 +110,14 @@ def verify_or_reissue_challenge(
             retryable=False,
         )
     except (ChallengeExpired, ChallengeFailed) as exc:
+        if isinstance(exc, ChallengeContextMismatch) and not reissue_context_mismatch:
+            return result_factory(
+                status="blocked",
+                error="challenge_context_mismatch",
+                operation_id=operation_id,
+                message="The write target or payload changed. Review the current target and original write before requesting a new challenge.",
+                retryable=False,
+            )
         return issue_challenge_result(
             runtime=runtime,
             result_factory=result_factory,

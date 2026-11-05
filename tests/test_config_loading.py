@@ -41,6 +41,10 @@ class DotenvConfigTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CHALLENGE_MAX_PENDING must be a positive integer", result.stderr)
 
+    def test_response_byte_budget_must_be_positive(self):
+        result = self.load_config("MCP_MAX_RESPONSE_BYTES=0\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MCP_MAX_RESPONSE_BYTES must be a positive integer", result.stderr)
 
 
 if __name__ == "__main__":

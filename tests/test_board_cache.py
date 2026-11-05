@@ -38,13 +38,14 @@ class BoardCacheTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(get_boards_cache("b"))
             self.assertEqual(get_boards_cache("c"), [])
 
-    async def test_cache_miss_fetches_only_current_agents_boards(self):
+    async def test_write_resolution_always_fetches_only_current_agents_boards(self):
         fetch = AsyncMock(return_value={"data": [{"board_id": 2, "board_url": "own-board"}]})
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
         set_boards_cache([{"boardId": 2, "boardUrl": "other-private-board"}], agent_token="other")
         self.assertEqual(await _resolve_board_url(runtime, 2, "current"), "own-board")
         self.assertEqual(await _resolve_board_url(runtime, 2, "current"), "own-board")
-        fetch.assert_awaited_once_with(token="current")
+        self.assertEqual(fetch.await_count, 2)
+        fetch.assert_awaited_with(token="current")
 
     async def test_unknown_board_does_not_fall_back_to_numeric_url(self):
         fetch = AsyncMock(return_value={"data": []})

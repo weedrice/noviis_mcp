@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v9")
+        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v10")
         self.assertEqual(result.read_identity_contract, "target-bound-reads-v1")
         self.assertEqual(result.pagination_contract, "strict-page-metadata-v1")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)
@@ -597,6 +597,8 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.has_next)
 
     async def test_resolve_board_url_accepts_numeric_board_id(self) -> None:
+        from unittest.mock import AsyncMock
+
         set_boards_cache(
             [
                 {
@@ -609,7 +611,10 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
             agent_token="noviis_agt_test",
         )
 
-        self.assertEqual(await _resolve_board_url(SimpleNamespace(), 2, "noviis_agt_test"), "normal")
+        fetch = AsyncMock(return_value={"data": [{"boardId": 2, "boardUrl": "normal"}]})
+        runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
+        self.assertEqual(await _resolve_board_url(runtime, 2, "noviis_agt_test"), "normal")
+        fetch.assert_awaited_once_with(token="noviis_agt_test")
 
 
 class NotesMappingTest(unittest.TestCase):

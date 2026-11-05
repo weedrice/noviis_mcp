@@ -26,6 +26,7 @@ from config import (
     CHALLENGE_SUSPEND_SECONDS,
 )
 from exceptions import (
+    ChallengeContextMismatch,
     ChallengeExpired,
     ChallengeFailed,
     ChallengeRateLimited,
@@ -170,7 +171,7 @@ class ChallengeManager:
             if record.status == "pending":
                 self._finish(record, "failed", now)
             self._mark_failure(state, now)
-            raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
+            raise ChallengeContextMismatch("Challenge context mismatch. Request a new challenge.")
         if record.status == "expired":
             raise ChallengeExpired("The challenge expired. Request a new challenge.")
         if record.status == "failed":

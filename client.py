@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import zlib
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ from logging_utils import sanitize_error_data
 from config import (
     AGENT_API_PREFIX,
     MCP_REQUEST_TIMEOUT_SECONDS,
+    MCP_MAX_RESPONSE_BYTES,
     NOVIIS_AGENT_INTERNAL_SECRET,
     NOVIIS_API_BASE_URL,
     REQUEST_TIMEOUT,
@@ -108,7 +110,8 @@ class NoviIsClient:
                 # Bound the whole HTTP attempt, not only individual httpx phases.
                 # The enclosing MCP deadline may be shorter than the local budget.
                 with anyio.fail_after(remaining):
-                    response = await self._client.request(
+                    response = await self._read_bounded_response(
+                        cache_token=token,
                         method=method,
                         url=path,
                         headers=headers,
@@ -116,6 +119,14 @@ class NoviIsClient:
                         json=json_body,
                         files=files,
                     )
+                    payload = self._parse_json(
+                        response, strict=200 <= response.status_code < 300,
+                        allow_empty=response.status_code == 204 and method.upper() == "DELETE",
+                    )
+                    # Synchronous JSON parsing cannot be interrupted by a cancel
+                    # scope. Never return its result after the request budget.
+                    if anyio.current_time() >= min(deadline, anyio.current_effective_deadline()):
+                        raise TimeoutError
             except TimeoutError as exc:
                 message = "NoviIs API request deadline exhausted."
                 if not safe_to_retry:
@@ -137,10 +148,6 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                payload = self._parse_json(
-                    response, strict=True,
-                    allow_empty=response.status_code == 204 and method.upper() == "DELETE",
-                )
                 if payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
                     raise BackendContractError("Backend reported an error in a successful HTTP response.")
                 payload.pop("_http_no_content", None)
@@ -148,9 +155,6 @@ class NoviIsClient:
                     payload["_http_no_content"] = True
                 self._attach_rate_limit(payload, response)
                 return payload
-            if token and response.status_code in {401, 403, 404}:
-                # Never keep this identity's board context after access/target failures.
-                clear_boards_cache(token)
             if response.status_code == 401:
                 logger.warning(
                     "noviis_api_unauthorized",
@@ -161,9 +165,8 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                raise Unauthorized(self._extract_message(response, known_secrets=error_secrets))
+                raise Unauthorized(self._extract_error(payload, response, known_secrets=error_secrets)["message"])
             if response.status_code == 403:
-                payload = self._parse_json(response)
                 error = self._extract_error(payload, response, known_secrets=error_secrets)
                 logger.warning(
                     "noviis_api_forbidden",
@@ -195,7 +198,6 @@ class NoviIsClient:
                     )
                 raise PermissionDenied(error["message"] or "Permission denied")
             if response.status_code == 429:
-                payload = self._parse_json(response)
                 error = self._extract_error(payload, response, known_secrets=error_secrets)
                 retry_after = self._parse_retry_after(response)
                 if retry_after is not None:
@@ -222,7 +224,7 @@ class NoviIsClient:
                             "token": mask_token(token),
                         },
                     )
-                    message = self._extract_message(response, known_secrets=error_secrets)
+                    message = self._extract_error(payload, response, known_secrets=error_secrets)["message"]
                     if not safe_to_retry:
                         message = (
                             "Write outcome is unknown; request was not automatically retried. "
@@ -235,7 +237,7 @@ class NoviIsClient:
                 if remaining <= SERVER_ERROR_WAIT + 1.0:
                     raise ServerError(
                         "NoviIs API read retry skipped: insufficient request deadline budget. "
-                        + self._extract_message(response, known_secrets=error_secrets)
+                        + self._extract_error(payload, response, known_secrets=error_secrets)["message"]
                     )
                 retried_500 = True
                 logger.warning(
@@ -251,7 +253,6 @@ class NoviIsClient:
                 await asyncio.sleep(SERVER_ERROR_WAIT)
                 continue
 
-            payload = self._parse_json(response)
             error = self._extract_error(payload, response, known_secrets=error_secrets)
             if error["code"]:
                 raise NoviIsAPIError(
@@ -278,10 +279,59 @@ class NoviIsClient:
                     request=exc.request, response=exc.response,
                 ) from None
 
+    async def _read_bounded_response(self, *, cache_token: str | None = None,
+                                     **request: Any) -> httpx.Response:
+        async with self._client.stream(**request) as response:
+            # Invalidate before consuming a potentially slow or malformed body.
+            if cache_token and response.status_code in {401, 403, 404}:
+                clear_boards_cache(cache_token)
+            body = bytearray()
+
+            def append(chunk: bytes) -> None:
+                if len(body) + len(chunk) > MCP_MAX_RESPONSE_BYTES:
+                    raise BackendContractError("Backend response exceeded the configured byte limit.")
+                body.extend(chunk)
+
+            if response.is_stream_consumed:
+                # Injected transports may supply an already decoded response.
+                append(response.content)
+            else:
+                encoding = response.headers.get("content-encoding", "identity").strip().lower()
+                if encoding not in {"", "identity", "gzip"}:
+                    raise BackendContractError("Backend returned an unsupported content encoding.")
+                decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
+                wire_bytes = 0
+                async for raw in response.aiter_raw():
+                    wire_bytes += len(raw)
+                    # Also bound gzip headers and other wire-only overhead.
+                    if wire_bytes > MCP_MAX_RESPONSE_BYTES + 65536:
+                        raise BackendContractError("Backend response exceeded the configured byte limit.")
+                    if decoder is None:
+                        append(raw)
+                        continue
+                    try:
+                        # Unlike HTTPX's automatic decoder, max_length bounds the
+                        # allocation before a compressed chunk can expand fully.
+                        append(decoder.decompress(raw, MCP_MAX_RESPONSE_BYTES - len(body) + 1))
+                        while decoder.unused_data:
+                            raw = decoder.unused_data
+                            decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                            append(decoder.decompress(raw, MCP_MAX_RESPONSE_BYTES - len(body) + 1))
+                    except zlib.error:
+                        raise BackendContractError("Backend returned invalid gzip data.") from None
+                if decoder is not None and not decoder.eof:
+                    raise BackendContractError("Backend returned incomplete gzip data.")
+            headers = response.headers.copy()
+            for key in ("content-encoding", "content-length", "transfer-encoding"):
+                headers.pop(key, None)
+            return httpx.Response(response.status_code, headers=headers, content=bytes(body),
+                                  request=response.request, extensions=response.extensions)
+
     def _build_headers(self, token: str | None) -> dict[str, str]:
         if token is not None and len(token) > 4096:
             raise ValueError("agent_token must be at most 4096 characters.")
         headers = {
+            "Accept-Encoding": "gzip, identity",
             "X-NoviIs-Agent": "true",
             "X-NoviIs-Internal-Secret": self._internal_secret,
         }
@@ -295,7 +345,7 @@ class NoviIsClient:
             return {}
         try:
             payload = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             if strict:
                 raise BackendContractError("Expected a JSON response from the backend.") from None
             return {}

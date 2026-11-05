@@ -34,13 +34,13 @@ from tools.parsing import (
     optional_int as _optional_int,
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
-    unwrap_list_data as _unwrap_list_data,
 )
 from tools.write_safety import validate_write_text as _validate_write_text, write_text_warnings
 from tools.write_errors import write_error_fields
 from tools.response_contract import (require_response_id, require_bool, require_response_count, require_target_id, require_positive_long_id)
 from tools.content_safety import content_warnings
 from tools.pagination import read_pagination
+from tools.read_metadata import ReadAuthor, read_author, read_post_metadata
 
 
 @dataclass
@@ -81,21 +81,22 @@ class FeedPost:
     board_url: str | None
     board_icon_url: str | None
     thumbnail_url: str | None
-    view_count: int
-    like_count: int
-    comment_count: int
-    created_at: str
-    has_my_comment: bool
+    view_count: int | None
+    like_count: int | None
+    comment_count: int | None
+    created_at: str | None
+    has_my_comment: bool | None
+    author: ReadAuthor | None = None
     content: str | None = None
-    is_notice: bool = False
-    is_nsfw: bool = False
-    is_spoiler: bool = False
-    is_secret: bool = False
-    is_liked: bool = False
-    is_scrapped: bool = False
-    is_subscribed: bool = False
-    inquiry_answered: bool = False
-    has_image: bool = False
+    is_notice: bool | None = None
+    is_nsfw: bool | None = None
+    is_spoiler: bool | None = None
+    is_secret: bool | None = None
+    is_liked: bool | None = None
+    is_scrapped: bool | None = None
+    is_subscribed: bool | None = None
+    inquiry_answered: bool | None = None
+    has_image: bool | None = None
     summary: str | None = None
     first_media_type: str | None = None
     first_media_url: str | None = None
@@ -127,6 +128,7 @@ class Comment:
     content: str
     created_at: str
     author_name: str | None = None
+    author: ReadAuthor | None = None
     depth: int = 0
     reply_count: int = 0
     like_count: int = 0
@@ -560,6 +562,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
         except NoviIsAPIError as exc:
             return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
+        # Bind the actual wire target, not just the user's ID or an empty slug.
+        request_payload["resolved_board_url"] = resolved_board_url
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -577,6 +581,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
+            reissue_context_mismatch=False,
         )
         if challenge_result is not None:
             return challenge_result
@@ -840,33 +845,14 @@ def _to_feed_post(item: dict[str, Any]) -> FeedPost:
     elif category_value is not None:
         category_name = str(category_value)
     return FeedPost(
+        **read_post_metadata(item),
+        author=read_author(item.get("author")),
         post_id=require_response_id(item, "postId", "post_id"),
         title=str(item.get("title", "")),
         author_name=author_name,
         content_preview=post_preview(item),
         content=post_content(item),
         board_id=require_response_id(item, "boardId", "board_id"),
-        board_name=_optional_str(item.get("boardName", item.get("board_name"))),
-        board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
-        board_icon_url=_optional_str(item.get("boardIconUrl", item.get("board_icon_url"))),
-        thumbnail_url=_optional_str(item.get("thumbnailUrl", item.get("thumbnail_url"))),
-        view_count=int(item.get("viewCount", item.get("view_count", 0))),
-        like_count=int(item.get("likeCount", item.get("like_count", 0))),
-        comment_count=int(item.get("commentCount", item.get("comment_count", 0))),
-        created_at=str(item.get("createdAt", item.get("created_at", ""))),
-        has_my_comment=bool(item.get("hasMyComment", item.get("has_my_comment", False))),
-        is_notice=bool(item.get("isNotice", item.get("is_notice", False))),
-        is_nsfw=bool(item.get("isNsfw", item.get("is_nsfw", False))),
-        is_spoiler=bool(item.get("isSpoiler", item.get("is_spoiler", False))),
-        is_secret=bool(item.get("isSecret", item.get("is_secret", False))),
-        is_liked=bool(item.get("isLiked", item.get("is_liked", False))),
-        is_scrapped=bool(item.get("isScrapped", item.get("is_scrapped", False))),
-        is_subscribed=bool(item.get("isSubscribed", item.get("is_subscribed", False))),
-        inquiry_answered=bool(item.get("inquiryAnswered", item.get("inquiry_answered", False))),
-        has_image=bool(item.get("hasImage", item.get("has_image", False))),
-        summary=_optional_str(item.get("summary")),
-        first_media_type=_optional_str(item.get("firstMediaType", item.get("first_media_type"))),
-        first_media_url=_optional_str(item.get("firstMediaUrl", item.get("first_media_url"))),
         category_id=_optional_str(item.get("categoryId", item.get("category_id"))) or category_id,
         category_name=_optional_str(item.get("categoryName", item.get("category_name"))) or category_name,
         content_warnings=content_warnings(
@@ -889,6 +875,7 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
     if parent_id is not None and str(parent_id) == comment_id:
         raise BackendContractError("Comment cannot be its own parent.")
     return Comment(
+        author=read_author(item.get("author")),
         comment_id=comment_id,
         post_id=require_response_id(item, "postId", "post_id"),
         parent_comment_id=str(parent_id) if parent_id is not None else None,
@@ -1081,7 +1068,7 @@ async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = 
         ticket = begin_boards_load(agent_token)
         try:
             payload = await runtime.client.get_boards(token=agent_token)
-            boards = _unwrap_list_data(payload, nested_key="boards")
+            boards = _read_boards_collection(payload)
             set_boards_cache(boards, agent_token=agent_token, load_ticket=ticket)
         finally:
             finish_boards_load(ticket)
@@ -1092,17 +1079,32 @@ async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_tok
     if board_id is None:
         raise ValueError("board_url could not be resolved; provide board_id or board_url.")
     board_id_str = str(board_lookup_id(board_id))
-    was_cached = get_boards_cache(agent_token) is not None
-    boards = await _load_boards(runtime, agent_token)
+    # Cached slugs can be renamed and reused by another board. Every write step
+    # must resolve its stable ID from a fresh list, including challenge issuance.
+    boards = await _load_boards(runtime, agent_token, force_refresh=True)
     resolved = _find_board_url(boards, board_id_str)
     if resolved is not None:
         return resolved
-    if was_cached:
-        boards = await _load_boards(runtime, agent_token, force_refresh=True)
-        resolved = _find_board_url(boards, board_id_str)
-        if resolved is not None:
-            return resolved
     raise ValueError("board_id was not found in this agent's board list; use get_boards(force_refresh=true) or provide board_url.")
+
+
+def _read_boards_collection(payload: Any) -> list[dict[str, Any]]:
+    """Validate legacy arrays and explicit wrappers before populating the cache."""
+    if isinstance(payload, list):
+        return require_object_list(payload, "boards")
+    if not isinstance(payload, dict):
+        raise BackendContractError("Board response must contain an explicit list.")
+    for envelope in (payload, payload.get("data")):
+        if isinstance(envelope, dict) and (
+            envelope.get("success") is False or envelope.get("error") not in (None, False, "", {})
+        ):
+            raise BackendContractError("Board response must be successful.")
+    data = payload["data"] if "data" in payload else payload.get("result", payload)
+    if isinstance(data, dict):
+        if "boards" not in data:
+            raise BackendContractError("Board response is missing its collection.")
+        data = data["boards"]
+    return require_object_list(data, "boards")
 
 
 def _find_board_url(boards: list[dict[str, Any]], board_id_str: str) -> str | None:
