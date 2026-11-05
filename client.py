@@ -9,13 +9,12 @@ from collections.abc import Mapping
 from typing import Any
 
 import httpx
+import anyio
 from cache import clear_boards_cache
 
 from config import (
     AGENT_API_PREFIX,
-    BACKOFF_BASE,
-    BACKOFF_MAX,
-    MAX_RETRY,
+    MCP_REQUEST_TIMEOUT_SECONDS,
     NOVIIS_AGENT_INTERNAL_SECRET,
     NOVIIS_API_BASE_URL,
     REQUEST_TIMEOUT,
@@ -24,7 +23,6 @@ from config import (
 from exceptions import (
     AgentSuspended,
     BackendContractError,
-    MaxRetryExceeded,
     NoviIsAPIError,
     PermissionDenied,
     ServerError,
@@ -86,10 +84,13 @@ class NoviIsClient:
             headers["Idempotency-Key"] = _operation_id(operation_id)
         safe_to_retry = method.upper() in {"GET", "HEAD", "OPTIONS"}
 
-        retries_for_429 = 0
+        deadline = min(anyio.current_effective_deadline(), anyio.current_time() + MCP_REQUEST_TIMEOUT_SECONDS)
         retried_500 = False
 
         while True:
+            remaining = min(deadline, anyio.current_effective_deadline()) - anyio.current_time()
+            if remaining <= 0:
+                raise ServerError("NoviIs API request deadline exhausted; no further request was sent.")
             try:
                 logger.info(
                     "noviis_api_request",
@@ -100,16 +101,27 @@ class NoviIsClient:
                         "params": dict(params) if params else None,
                     },
                 )
-                response = await self._client.request(
-                    method=method,
-                    url=path,
-                    headers=headers,
-                    params=params,
-                    json=json_body,
-                    files=files,
-                )
+                # Bound the whole HTTP attempt, not only individual httpx phases.
+                # The enclosing MCP deadline may be shorter than the local budget.
+                with anyio.fail_after(remaining):
+                    response = await self._client.request(
+                        method=method,
+                        url=path,
+                        headers=headers,
+                        params=params,
+                        json=json_body,
+                        files=files,
+                    )
+            except TimeoutError as exc:
+                message = "NoviIs API request deadline exhausted."
+                if not safe_to_retry:
+                    message += " Write outcome is unknown; inspect activity before retrying."
+                raise ServerError(message) from exc
             except httpx.HTTPError as exc:
-                raise ServerError(f"NoviIs API request failed: {exc}") from exc
+                message = f"NoviIs API request failed: {exc}"
+                if not safe_to_retry:
+                    message += " Write outcome is unknown; inspect activity before retrying."
+                raise ServerError(message) from exc
 
             if 200 <= response.status_code < 300:
                 logger.info(
@@ -184,31 +196,15 @@ class NoviIsClient:
                 retry_after = self._parse_retry_after(response)
                 if retry_after is not None:
                     error["details"] = {**error["details"], "retry_after_seconds": retry_after}
-                if error["code"]:
-                    raise NoviIsAPIError(
-                        status_code=response.status_code,
-                        code=error["code"],
-                        message=error["message"],
-                        details=error["details"],
-                    )
-                if retries_for_429 >= MAX_RETRY:
-                    raise MaxRetryExceeded("Exceeded maximum retries for rate limit responses")
-                retries_for_429 += 1
-                wait_seconds = retry_after or min(BACKOFF_BASE * (2 ** (retries_for_429 - 1)), BACKOFF_MAX)
-                logger.warning(
-                    "noviis_api_rate_limited",
-                    extra={
-                        "http_method": method.upper(),
-                        "path": path,
-                        "token": mask_token(token),
-                        "wait_seconds": wait_seconds,
-                        "attempt": retries_for_429,
-                        "max_retry": MAX_RETRY,
-                        "status_code": response.status_code,
-                    },
+                # Return the retry contract to the caller even for uncoded proxy
+                # responses. Sleeping here consumes the MCP deadline and can replay
+                # a write whose rejection semantics are not known to this client.
+                raise NoviIsAPIError(
+                    status_code=response.status_code,
+                    code=error["code"] or "rate_limited",
+                    message=error["message"],
+                    details=error["details"],
                 )
-                await asyncio.sleep(wait_seconds)
-                continue
             if response.status_code >= 500:
                 # Writes may already have committed before the error response.
                 # Retry only reads until the backend supports idempotency keys.
@@ -229,6 +225,14 @@ class NoviIsClient:
                             "Check the resulting activity before starting a new write. " + message
                         )
                     raise ServerError(message)
+                remaining = min(deadline, anyio.current_effective_deadline()) - anyio.current_time()
+                # Leave at least one second for an actual retry after the delay.
+                # A delayed retry with no request budget only hides the backend error.
+                if remaining <= SERVER_ERROR_WAIT + 1.0:
+                    raise ServerError(
+                        "NoviIs API read retry skipped: insufficient request deadline budget. "
+                        + self._extract_message(response)
+                    )
                 retried_500 = True
                 logger.warning(
                     "noviis_api_server_error_retry",
@@ -348,13 +352,13 @@ class NoviIsClient:
             return None
         try:
             seconds = float(value)
-            return max(1, math.ceil(seconds)) if math.isfinite(seconds) else None
+            return max(0, math.ceil(seconds)) if math.isfinite(seconds) else None
         except ValueError:
             try:
                 instant = parsedate_to_datetime(value)
                 if instant.tzinfo is None:
                     return None
-                return max(1, math.ceil((instant - datetime.now(timezone.utc)).total_seconds()))
+                return max(0, math.ceil((instant - datetime.now(timezone.utc)).total_seconds()))
             except (ValueError, TypeError, OverflowError):
                 return None
 
@@ -457,7 +461,7 @@ class NoviIsClient:
         )
 
     async def get_comment_replies(self, *, token: str, comment_id: str,
-                                  page: int = 0, size: int = 50) -> dict[str, Any]:
+                                  page: int = 0, size: int = 20) -> dict[str, Any]:
         return await self.request_json("GET", f"{AGENT_API_PREFIX}/comments/{_path_id(comment_id)}/replies",
                                        token=token, params={"page": page, "size": size})
 

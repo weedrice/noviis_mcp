@@ -69,13 +69,13 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
         if name in invalid:
             continue
         try:
-            validate_tool_inputs({name: value})
+            validate_tool_inputs({name: value}, tool_name=tool_name)
             if name in RESOURCE_ID_PARAMS and value is not None:
                 params[name] = resource_id(value)
             if name == "observed_comment_ids":
                 params[name] = observed_comment_ids(value)
             if tool_name in {"create_post", "create_comment", "create_reply", "send_note"} and name in {"title", "content"}:
-                validate_write_text(name, value)
+                validate_write_text(name, value, tool_name=tool_name)
         except (ValueError, TypeError, AttributeError):
             invalid.add(name)
     if tool_name == "create_post" and params.get("board_id") is None and not params.get("board_url"):
@@ -94,9 +94,7 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
         alt = params.get("image_alt")
         if isinstance(alt, str):
             try:
-                validate_write_text("image_alt", alt)
-                if len(alt) > 300:
-                    raise ValueError("Image description is too long")
+                validate_write_text("image_alt", alt, tool_name=tool_name)
             except ValueError:
                 invalid.add("image_alt")
             if alt.strip() and image_id is None:

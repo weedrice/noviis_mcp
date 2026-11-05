@@ -120,6 +120,29 @@ def unwrap_dict_data(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def read_collection(payload: Any, *keys: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Require an explicit collection; missing or corrupt data is not an empty page."""
+    from exceptions import BackendContractError
+
+    if not isinstance(payload, dict) or payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
+        raise BackendContractError("Read response must be a successful object.")
+    data = payload["data"] if "data" in payload else payload
+    if not isinstance(data, dict):
+        raise BackendContractError("Read response data must be an object.")
+    for key in keys:
+        if key in data:
+            return data, require_object_list(data[key], key)
+    raise BackendContractError("Read response is missing its collection.")
+
+
+def require_object_list(value: Any, field: str) -> list[dict[str, Any]]:
+    from exceptions import BackendContractError
+
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise BackendContractError(f"Read response {field} must be a list of objects.")
+    return value
+
+
 def unwrap_list_data(payload: dict[str, Any], *, nested_key: str | None = None) -> list[dict[str, Any]]:
     data = payload.get("data")
     if isinstance(data, list):

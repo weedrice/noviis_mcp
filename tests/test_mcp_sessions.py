@@ -120,7 +120,7 @@ class MCPSessionTest(unittest.TestCase):
         }[tool]
         response = self.http.post("/mcp", headers=session, json={
             "jsonrpc": "2.0", "id": self.counter, "method": "tools/call",
-            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample", **target, **extra}},
+            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample" * 10, **target, **extra}},
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
@@ -427,7 +427,7 @@ class MCPSessionTest(unittest.TestCase):
         self.backend = slow_backend
         response = self.http.post("/mcp", headers=session, json={
             "jsonrpc": "2.0", "id": 999, "method": "tools/call",
-            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample", **answer}},
+            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample" * 10, **answer}},
         })
         self.assertEqual(response.status_code, 504)
         self.assertTrue(self.client_closed[-1].wait(timeout=5))
@@ -509,7 +509,7 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             self.assertIsNone(session_id())
-                            args = {"agent_token": "test-token", "post_id": "1", "content": "sample"}
+                            args = {"agent_token": "test-token", "post_id": "1", "content": "sample" * 10}
                             issued = await session.call_tool("create_comment", args)
                             self.assertFalse(issued.isError)
                             args.update(challenge_id=issued.structuredContent["challenge"]["challenge_id"], answer="2.00")

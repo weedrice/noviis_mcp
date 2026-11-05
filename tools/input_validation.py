@@ -10,7 +10,15 @@ from pydantic import AfterValidator, Field, StrictInt, StrictStr, TypeAdapter
 ResourceId = StrictStr | StrictInt
 PageNumber = Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
 PageSize = Annotated[int, Field(strict=True, ge=1, le=100)]
+FeedPageSize = Annotated[int, Field(strict=True, ge=1, le=10)]
+ReadPageSize = Annotated[int, Field(strict=True, ge=1, le=20)]
+NoteThreadPageSize = Annotated[int, Field(strict=True, ge=1, le=50)]
 _PAGINATION_ADAPTERS = {"page": TypeAdapter(PageNumber), "size": TypeAdapter(PageSize), "limit": TypeAdapter(PageSize)}
+_TOOL_SIZE_ADAPTERS = {name: TypeAdapter(kind) for name, kind in {
+    "get_feed": FeedPageSize, "get_my_posts": ReadPageSize, "get_board_posts": ReadPageSize,
+    "get_post_comments": ReadPageSize, "get_comment_replies": ReadPageSize,
+    "get_notes": ReadPageSize, "get_note_thread": NoteThreadPageSize,
+}.items()}
 RESOURCE_ID_PARAMS = {"post_id", "comment_id", "board_id", "category_id", "note_thread_id"}
 
 
@@ -51,7 +59,7 @@ def resource_id(value: str | int) -> str:
     return result
 
 
-def validate_tool_inputs(values: dict[str, Any]) -> None:
+def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):
         if values.get(key) is not None:
@@ -61,18 +69,22 @@ def validate_tool_inputs(values: dict[str, Any]) -> None:
     for key, adapter in _PAGINATION_ADAPTERS.items():
         value = values.get(key)
         if value is not None:
+            if key in {"size", "limit"}:
+                adapter = _TOOL_SIZE_ADAPTERS.get(tool_name, adapter)
             adapter.validate_python(value)
     if "force_refresh" in values and type(values["force_refresh"]) is not bool:
         raise ValueError("force_refresh must be a boolean.")
     if "observed_comment_ids" in values:
         observed_comment_ids(values["observed_comment_ids"])
     bounds = {"agent_token": 4096, "name": 100, "description": 2000,
-              "recipient_agent_name": 100, "query": 2000, "board_url": 200,
+              "recipient_agent_name": 100, "query": 2000, "board_url": 100,
               "cursor": 2048, "filename": 255}
     for key, maximum in bounds.items():
         value = values.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > maximum):
             raise ValueError(f"{key} must be nonempty and at most {maximum} characters.")
+    if values.get("board_url") is not None and not re.fullmatch(r"[a-z0-9_-]+", values["board_url"]):
+        raise ValueError("board_url must contain only lowercase ASCII letters, digits, underscores, or hyphens.")
     if "box" in values and values["box"] not in {"inbox", "sent", "unread"}:
         raise ValueError("box must be inbox, sent, or unread.")
     if "content_type" in values and values["content_type"].upper() not in {"ALL", "POST", "COMMENT"}:
@@ -80,7 +92,7 @@ def validate_tool_inputs(values: dict[str, Any]) -> None:
 
 
 def feed_pagination(*, limit: int | None, cursor: str | None, page: int | None, size: int | None) -> tuple[int, int]:
-    validate_tool_inputs({"limit": limit, "page": page, "size": size})
+    validate_tool_inputs({"limit": limit, "page": page, "size": size}, tool_name="get_feed")
     if cursor is not None:
         raise ValueError("Cursor pagination is not supported. Use page and size.")
     if limit is not None and size is not None and limit != size:

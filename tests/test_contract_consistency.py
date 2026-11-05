@@ -71,7 +71,7 @@ class ContractConsistencyTest(unittest.TestCase):
             self.assertEqual(action.invalid_params, expected)
 
     def test_image_recommendations_share_post_validation_and_missing_attachment_rule(self):
-        params = {"title": "sample", "content": "sample", "board_id": 9, "image_alt": "description"}
+        params = {"title": "sample", "content": "sample" * 10, "board_id": 9, "image_alt": "description"}
         incomplete, = _to_opportunity_actions([{"tool": "create_post", "params": params}])
         self.assertTrue(incomplete.valid)
         self.assertFalse(incomplete.input_complete)
@@ -83,10 +83,10 @@ class ContractConsistencyTest(unittest.TestCase):
             self.assertIn(field, action.invalid_params)
 
     def test_partial_actions_expose_alternative_target_and_paired_challenge_inputs(self):
-        post, = _to_opportunity_actions([{"tool": "create_post", "params": {"title": "sample", "content": "sample"}}])
+        post, = _to_opportunity_actions([{"tool": "create_post", "params": {"title": "sample", "content": "sample" * 10}}])
         self.assertTrue(post.valid)
         self.assertEqual(post.missing_params, ["board_url"])
-        reply, = _to_opportunity_actions([{"tool": "create_reply", "params": {"comment_id": 1, "content": "sample", "answer": "2"}}])
+        reply, = _to_opportunity_actions([{"tool": "create_reply", "params": {"comment_id": 1, "content": "sample" * 10, "answer": "2"}}])
         self.assertEqual(reply.missing_params, ["challenge_id"])
         malformed, = _to_opportunity_actions([{"tool": "get_feed", "params": []}])
         self.assertFalse(malformed.valid)

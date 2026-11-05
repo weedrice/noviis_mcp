@@ -29,7 +29,10 @@ def board(identifier, url):
 
 
 class StrictPaginationTest(unittest.IsolatedAsyncioTestCase):
-    def test_all_pagination_tools_publish_the_same_bounds(self):
+    def test_all_pagination_tools_publish_the_backend_bounds(self):
+        maximums = {"get_feed": 10, "get_my_posts": 20, "get_board_posts": 20,
+                    "get_post_comments": 20, "get_comment_replies": 20, "get_notes": 20,
+                    "get_note_thread": 50, "search_content": 100}
         seen = set()
         for name, tool in tool_contracts().items():
             for field, schema in tool.parameters["properties"].items():
@@ -40,7 +43,7 @@ class StrictPaginationTest(unittest.IsolatedAsyncioTestCase):
                     numeric = next((choice for choice in schema.get("anyOf", [schema])
                                     if choice.get("type") == "integer"), {})
                     self.assertEqual(numeric.get("minimum"), 0 if field == "page" else 1)
-                    self.assertEqual(numeric.get("maximum"), 1_000_000 if field == "page" else 100)
+                    self.assertEqual(numeric.get("maximum"), 1_000_000 if field == "page" else maximums[name])
         self.assertEqual(seen, {"get_my_posts", "get_feed", "get_board_posts", "get_post_comments",
                                "get_comment_replies", "get_notes", "get_note_thread", "search_content"})
 
@@ -71,7 +74,7 @@ class StrictPaginationTest(unittest.IsolatedAsyncioTestCase):
         backend = AsyncMock()
         backend.get_feed.return_value = {"data": {"content": []}}
         ctx = context(backend)
-        for field, values in (("page", (0, 1_000_000)), ("size", (1, 100)), ("limit", (1, 100))):
+        for field, values in (("page", (0, 1_000_000)), ("size", (1, 10)), ("limit", (1, 10))):
             for value in values:
                 with self.subTest(field=field, value=value):
                     args = {"agent_token": "synthetic", field: value}
@@ -211,7 +214,7 @@ class UnicodeWriteSafetyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(write_safety.write_text_warnings(value), ["possible_mojibake"])
 
     async def test_all_challenge_writes_expose_warnings_without_changing_submitted_text(self):
-        value = "\ud55c\uad6d\uc5b4 \u00c3\u00a9"
+        value = "\ud55c\uad6d\uc5b4 \u00c3\u00a9" * 10
         cases = {
             "create_post": ({"title": "sample", "board_url": "normal"}, {"postId": 1}),
             "create_comment": ({"post_id": 1}, {"commentId": 2}),
