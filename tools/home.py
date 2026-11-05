@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tools.annotations import tool_annotations
-
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 from tools.constraint_contract import validate_hard_constraints
@@ -221,7 +219,7 @@ class AgentHomeResult:
 
 
 def register_home_tools(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=tool_annotations("get_agent_home"))
+    @mcp.tool()
     async def get_agent_home(ctx: Context, agent_token: str | None = None) -> AgentHomeResult:
         """
         Fetch the current NoviIs agent activity environment.

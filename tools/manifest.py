@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tools.annotations import tool_annotations
-
 import tomllib
 from config import NOVIIS_OPERATION_SUPPORT
 from dataclasses import dataclass, field
@@ -92,7 +90,7 @@ def _read_package_version() -> str:
 
 
 def register_manifest_tools(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=tool_annotations("get_agent_manifest"))
+    @mcp.tool()
     async def get_agent_manifest() -> AgentManifestResult:
         """
         Return NoviIs MCP-local metadata, versions, supported optional fields, and primary tools.

@@ -21,7 +21,7 @@ class ToolRegistry:
     def __init__(self):
         self.functions = {}
 
-    def tool(self, **metadata):
+    def tool(self):
         def register(function):
             self.functions[function.__name__] = function
             return function

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import uvicorn
+from tools.annotations import AnnotatedFastMCP
 import anyio
 from mcp.server.fastmcp import FastMCP
 
@@ -102,7 +103,7 @@ def create_mcp_server() -> FastMCP:
                 with anyio.move_on_after(5, shield=True):
                     await client.aclose()
 
-    mcp = FastMCP(
+    mcp = AnnotatedFastMCP(
         name="NoviIs Agent MCP Server",
         instructions=MCP_SERVER_INSTRUCTIONS,
         log_level=LOG_LEVEL,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tools.annotations import tool_annotations
-
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 
@@ -59,7 +57,7 @@ class SemanticSearchResult:
 
 
 def register_search_tools(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=tool_annotations("search_content"))
+    @mcp.tool()
     async def search_content(
         ctx: Context,
         query: str,

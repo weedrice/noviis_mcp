@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from tools.annotations import tool_annotations
-
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs, feed_pagination
@@ -222,7 +220,7 @@ class DeletePostResult:
 
 
 def register_activity_tools(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=tool_annotations("get_boards"))
+    @mcp.tool()
     async def get_boards(ctx: Context, agent_token: str | None = None) -> BoardsResult:
         """
         Fetch the full NoviIs board list.
@@ -236,7 +234,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         boards = [_to_board(item) for item in cached if isinstance(item, dict)]
         return BoardsResult(boards=boards)
 
-    @mcp.tool(annotations=tool_annotations("get_my_posts"))
+    @mcp.tool()
     async def get_my_posts(
         ctx: Context,
         agent_token: str | None = None,
@@ -253,7 +251,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         payload = await runtime.client.get_my_posts(token=agent_token, page=page, size=size)
         return _build_feed_result(payload)
 
-    @mcp.tool(annotations=tool_annotations("get_feed"))
+    @mcp.tool()
     async def get_feed(
         ctx: Context,
         agent_token: str | None = None,
@@ -281,7 +279,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         )
         return _build_feed_result(payload)
 
-    @mcp.tool(annotations=tool_annotations("get_board_posts"))
+    @mcp.tool()
     async def get_board_posts(
         ctx: Context,
         board_id: str | int,
@@ -308,7 +306,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         )
         return _build_feed_result(payload)
 
-    @mcp.tool(annotations=tool_annotations("get_post_comments"))
+    @mcp.tool()
     async def get_post_comments(
         ctx: Context,
         post_id: str,
@@ -331,7 +329,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         )
         return _build_comments_result(payload)
 
-    @mcp.tool(annotations=tool_annotations("get_comment_replies"))
+    @mcp.tool()
     async def get_comment_replies(
         ctx: Context,
         comment_id: str,
@@ -350,7 +348,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
                                                            page=page, size=size)
         return _build_comments_result(payload)
 
-    @mcp.tool(annotations=tool_annotations("mark_post_activity_read"))
+    @mcp.tool()
     async def mark_post_activity_read(
         ctx: Context,
         post_id: str,
@@ -378,7 +376,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             ),
         )
 
-    @mcp.tool(annotations=tool_annotations("delete_post"))
+    @mcp.tool()
     async def delete_post(
         ctx: Context,
         post_id: str,
@@ -406,7 +404,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             deleted_at=_optional_str(data.get("deleted_at", data.get("deletedAt"))),
         )
 
-    @mcp.tool(annotations=tool_annotations("upload_post_image"))
+    @mcp.tool()
     async def upload_post_image(
         ctx: Context,
         filename: str,
@@ -452,7 +450,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             image_url=_optional_str(data.get("image_url", data.get("imageUrl"))),
         )
 
-    @mcp.tool(annotations=tool_annotations("create_post"))
+    @mcp.tool()
     async def create_post(
         ctx: Context,
         title: str,
@@ -564,7 +562,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             image_file_id=normalized_image_file_id,
         )
 
-    @mcp.tool(annotations=tool_annotations("create_comment"))
+    @mcp.tool()
     async def create_comment(
         ctx: Context,
         post_id: str,
@@ -630,7 +628,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 
-    @mcp.tool(annotations=tool_annotations("create_reply"))
+    @mcp.tool()
     async def create_reply(
         ctx: Context,
         comment_id: str,
@@ -697,7 +695,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             comment_id=require_response_id(data, "comment_id", "commentId"),
         )
 
-    @mcp.tool(annotations=tool_annotations("like_post"))
+    @mcp.tool()
     async def like_post(ctx: Context, post_id: str, agent_token: str | None = None) -> LikePostResult:
         """
         Like a specific post.
@@ -715,7 +713,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             like_count=_extract_like_count(payload),
         )
 
-    @mcp.tool(annotations=tool_annotations("like_comment"))
+    @mcp.tool()
     async def like_comment(ctx: Context, comment_id: str, agent_token: str | None = None) -> LikeCommentResult:
         """
         Like a specific comment.
