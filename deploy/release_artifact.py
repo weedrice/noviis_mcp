@@ -1,6 +1,8 @@
 """Verify portable application sources and install hash-locked native dependencies."""
 from __future__ import annotations
 
+import ast
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -8,6 +10,61 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import re
+import tomllib
+
+
+@dataclass(frozen=True)
+class ReleaseIdentity:
+    package_version: str
+    build_revision: str
+
+
+def read_release_identity(root: Path, *, manifest: dict | None = None,
+                          allow_legacy: bool = False) -> ReleaseIdentity | None:
+    """Read checksummed identity without executing staged or previous source code.
+
+    An installed release also contains its venv and shared links, so rollback
+    verifies the identity files individually instead of the pristine inventory.
+    Legacy fallback is allowed only when build metadata was never included.
+    """
+    metadata_path = root / "release-manifest.json"
+    if manifest is None:
+        if not metadata_path.exists() and allow_legacy and not (root / "tools/_build_info.py").exists():
+            return None
+        manifest = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if manifest.get("format") != 2 or not isinstance(manifest.get("files"), dict):
+        raise ValueError("Invalid release identity manifest")
+    files = manifest["files"]
+    build_name = "tools/_build_info.py"
+    if build_name not in files:
+        if allow_legacy and not (root / build_name).exists():
+            return None
+        raise ValueError("Release is missing checksummed build identity")
+
+    def verified_text(name: str) -> str:
+        path = root / name
+        if (name not in files or path.is_symlink() or not path.is_file()
+                or not path.resolve().is_relative_to(root.resolve()) or digest(path) != files[name]):
+            raise ValueError("Release identity checksum mismatch: " + name)
+        return path.read_text(encoding="utf-8")
+
+    project = tomllib.loads(verified_text("pyproject.toml")).get("project", {})
+    embedded = {}
+    for node in ast.parse(verified_text(build_name)).body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            raise ValueError("Invalid embedded release identity")
+        name = node.targets[0].id
+        if name not in {"PACKAGE_VERSION", "BUILD_REVISION"} or name in embedded:
+            raise ValueError("Invalid embedded release identity")
+        embedded[name] = ast.literal_eval(node.value)
+    version, revision = embedded.get("PACKAGE_VERSION"), embedded.get("BUILD_REVISION")
+    if (project.get("name") != "noviis-mcp" or not isinstance(version, str) or not version.strip()
+            or version != project.get("version") or not isinstance(revision, str)
+            or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", revision)
+            or revision != manifest.get("revision")):
+        raise ValueError("Release identity does not match the verified artifact")
+    return ReleaseIdentity(version, revision)
 
 
 def verification_environment(work: Path) -> dict[str, str]:

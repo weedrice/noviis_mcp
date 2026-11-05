@@ -29,7 +29,7 @@ Deployment flow:
 2. The main-only deployment job downloads that verified artifact, checks its SHA-256 and copies it to the WAS over SSH. The server verifies the same archive checksum before executing its helpers.
 3. `deploy/deploy.sh` prepares a unique `releases/<timestamp>-<id>` directory and its own virtualenv. Before resolving application dependencies, both CI and the server install the exact pip version and wheel hash in the bundled `requirements-installer.lock` and print its version. This avoids host-dependent `ensurepip` versions misresolving extras such as `pyjwt[crypto]` under `--require-hashes`. Bootstrap failure aborts before activation. Shared `.env`, `.env.local`, and `logs` stay in the app root.
 4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and a 30-second MCP initialization/tool-registration check must pass before shared production configuration/logs are attached. This check uses only synthetic settings and temporary logs, without backend requests or a listening port. Production import validation (also limited to 30 seconds) loads both dotenv files, requires the configured log directory to exist, and redirects validation logs to a temporary directory before importing the application. It never opens production log files as the deploy user. Validation finishes before an atomic `current` symlink switch and systemd restart. The full regression suite runs in CI, with a 180-second limit.
-5. MCP initialization and tool registration are checked with bounded readiness retries. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. A failed first installation stops the service.
+5. MCP initialization, tool registration, and `get_agent_manifest` are checked with bounded readiness retries. The live application version and build commit must match the checksum-verified staged release; an old process or missing identity fails readiness. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. Rollback compares the prior release's own verified identity when available. Only prior releases that predate build metadata use protocol-only recovery, with an explicit legacy warning; new deployments never use this fallback. A failed first installation stops the service.
 
 Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and enough directory traversal access to check that the configured log directory exists; it does not need write access to production logs. The service user needs read/execute access to releases and production configuration, plus write/execute access to the log directory and write access to existing log files. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
 
@@ -151,6 +151,13 @@ running server. Direct development runs return a null revision rather than infer
 one from an unrelated checkout. Installed package metadata is the fallback when
 no embedded or matching source version is available. Guide and contract versions
 remain separately versioned; a contract version identifies its data shape.
+
+Deployment reads the embedded constants without executing them, checks their
+hashes and agreement with the artifact revision and project version, then compares
+them with the running server. Installed-release identity verification also works
+after its virtualenv and shared configuration links have been added. Missing or
+modified identity files in a release that declared them abort verification rather
+than silently falling back to legacy checks.
 
 ## Logging
 
