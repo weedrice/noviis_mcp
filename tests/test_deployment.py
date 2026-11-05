@@ -13,15 +13,18 @@ import unittest
 from unittest.mock import Mock, patch
 
 from deploy.deploy_release import activate, deploy, extract_release, validate_production
-from deploy.release_artifact import verification_environment
+from deploy.release_artifact import verification_environment, write_manifest
 
 
 def bundle(archive, files, *, tamper=False, include_installer=True):
     files = {**files, "requirements.lock": b"# locked test fixture",
              "wheelhouse/noviis_mcp-0.1.0-py3-none-any.whl": b"synthetic wheel"}
+    if files.get("pyproject.toml") == b"":
+        files["pyproject.toml"] = b'[project]\nname = "noviis-mcp"\nversion = "0.2.0"\n'
+    files.setdefault("tools/_build_info.py", ("PACKAGE_VERSION = '0.2.0'\nBUILD_REVISION = '" + "a" * 40 + "'\n").encode())
     if include_installer:
         files["requirements-installer.lock"] = b"# locked installer fixture"
-    manifest = {"format": 2, "revision": "test", "minimum_python": [3, 11],
+    manifest = {"format": 2, "revision": "a" * 40, "minimum_python": [3, 11],
                 "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files["release-manifest.json"] = json.dumps(manifest).encode()
     if tamper:
@@ -70,8 +73,10 @@ class DeploymentTest(unittest.TestCase):
         def switch(current, target):
             events.append(("switch", target))
             self.assertTrue((target / "main.py").is_file())
-        release = self.run_deploy(run=run, switch=switch, smoke=lambda _: events.append(("smoke", None)))
+        release = self.run_deploy(run=run, switch=switch, smoke=lambda _, **kwargs: events.append(("smoke", kwargs["expected_identity"])))
         self.assertEqual([event[0] for event in events], ["run"] * 8 + ["switch", "run", "smoke", "run"])
+        self.assertEqual(events[-2][1].build_revision, "a" * 40)
+        self.assertEqual(events[-2][1].package_version, "0.2.0")
         bootstrap = events[1][1]
         self.assertEqual(bootstrap[1:], [
             "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", "--no-deps",
@@ -127,6 +132,8 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(switch.call_args.args, (self.app / "current", None))
         self.assertEqual(sum("restart" in call.args[0] for call in run.call_args_list), 2)
         self.assertEqual(smoke.call_count, 11)
+        self.assertEqual(smoke.call_args_list[0].kwargs["expected_identity"].build_revision, "a" * 40)
+        self.assertIsNone(smoke.call_args_list[-1].kwargs["expected_identity"])
 
     def test_first_deployment_failure_stops_service(self):
         run = Mock()
@@ -318,6 +325,27 @@ class ProductionValidationTest(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "POSIX deployment symlink semantics")
 class AtomicSwitchTest(unittest.TestCase):
+    def test_rollback_checks_the_previous_identity_instead_of_the_failed_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory)
+            old = app / "releases/old"
+            old.mkdir(parents=True)
+            archive = app / "old.tgz"
+            bundle(archive, {"main.py": b"# old", "pyproject.toml": b"", "tools/__init__.py": b""})
+            extract_release(archive, old)
+            (old / "tools/_build_info.py").write_text(
+                "PACKAGE_VERSION = '0.2.0'\nBUILD_REVISION = '" + "b" * 40 + "'\n", encoding="utf-8")
+            write_manifest(old, "b" * 40)
+            activate(app / "current", old)
+            archive = app / "new.tgz"
+            bundle(archive, {"main.py": b"# new", "pyproject.toml": b"", "tools/__init__.py": b""})
+            smoke = Mock(side_effect=[RuntimeError("new release failed")] * 10 + [None])
+            with patch("deploy.deploy_release.time.sleep"), self.assertRaisesRegex(RuntimeError, "new release failed"):
+                deploy(app, archive, "test.service", "http://127.0.0.1/mcp", run=Mock(), smoke=smoke)
+            self.assertEqual((app / "current").resolve(), old)
+            self.assertEqual(smoke.call_args_list[0].kwargs["expected_identity"].build_revision, "a" * 40)
+            self.assertEqual(smoke.call_args_list[-1].kwargs["expected_identity"].build_revision, "b" * 40)
+
     def test_failed_release_restores_real_symlink_and_preserves_shared_files(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
