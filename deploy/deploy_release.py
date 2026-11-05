@@ -16,9 +16,9 @@ import uuid
 
 
 if __package__:
-    from .release_artifact import check_runtime, install_release, verify_release
+    from .release_artifact import ReleaseIdentity, check_runtime, install_release, read_release_identity, verify_release
 else:
-    from release_artifact import check_runtime, install_release, verify_release
+    from release_artifact import ReleaseIdentity, check_runtime, install_release, read_release_identity, verify_release
 
 
 def extract_release(archive: Path, destination: Path) -> None:
@@ -50,7 +50,32 @@ def activate(current: Path, target: Path | None) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def smoke_check(url: str, timeout: float = 5) -> None:
+def _rpc_result(payload: object) -> dict:
+    if not isinstance(payload, dict) or "error" in payload or not isinstance(payload.get("result"), dict):
+        raise RuntimeError("MCP readiness returned an invalid or error response")
+    return payload["result"]
+
+
+def _manifest_result(result: dict) -> dict:
+    if result.get("isError", False) is not False:
+        raise RuntimeError("MCP manifest readiness returned a tool error")
+    if "structuredContent" in result:
+        manifest = result["structuredContent"]
+    else:
+        content = result.get("content", [])
+        if (not isinstance(content, list) or len(content) != 1
+                or not isinstance(content[0], dict) or content[0].get("type") != "text"):
+            raise RuntimeError("MCP manifest readiness is missing JSON content")
+        try:
+            manifest = json.loads(content[0]["text"])
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("MCP manifest readiness is missing JSON content") from None
+    if not isinstance(manifest, dict):
+        raise RuntimeError("MCP manifest readiness is not an object")
+    return manifest
+
+
+def smoke_check(url: str, timeout: float = 5, *, expected_identity: ReleaseIdentity | None = None) -> None:
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
     body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "deployment-check", "version": "1"}}}
@@ -58,32 +83,43 @@ def smoke_check(url: str, timeout: float = 5) -> None:
     with urllib.request.urlopen(request, timeout=timeout) as response:
         result = json.load(response)
         session = response.headers.get("Mcp-Session-Id")
-    protocol = result.get("result", {}).get("protocolVersion")
+    initialized = _rpc_result(result)
+    protocol = initialized.get("protocolVersion")
     if not isinstance(protocol, str):
         raise RuntimeError("MCP initialization smoke check failed")
     headers["MCP-Protocol-Version"] = protocol
     if session:
         headers["Mcp-Session-Id"] = session
     try:
+        if expected_identity is not None and initialized.get("serverInfo", {}).get("version") != expected_identity.package_version:
+            raise RuntimeError("Running MCP application version differs from the deployment target")
         notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(notification).encode(), headers=headers), timeout=timeout):
             pass
         listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(listing).encode(), headers=headers), timeout=timeout) as response:
             result = json.load(response)
-        names = {tool["name"] for tool in result.get("result", {}).get("tools", [])}
+        names = {tool["name"] for tool in _rpc_result(result).get("tools", [])}
         if not {"get_agent_home", "create_post", "send_note"}.issubset(names):
             raise RuntimeError("MCP tool registration smoke check failed")
+        if expected_identity is not None:
+            call = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                    "params": {"name": "get_agent_manifest", "arguments": {}}}
+            with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(call).encode(), headers=headers), timeout=timeout) as response:
+                manifest = _manifest_result(_rpc_result(json.load(response)))
+            if (manifest.get("build_revision") != expected_identity.build_revision
+                    or manifest.get("package_version") != expected_identity.package_version):
+                raise RuntimeError("Running MCP build identity differs from the deployment target")
     finally:
         if session:
             with urllib.request.urlopen(urllib.request.Request(url, method="DELETE", headers=headers), timeout=timeout):
                 pass
 
 
-def wait_for_health(smoke, url: str) -> None:
+def wait_for_health(smoke, url: str, expected_identity: ReleaseIdentity | None) -> None:
     for attempt in range(10):
         try:
-            smoke(url)
+            smoke(url, expected_identity=expected_identity)
             return
         except Exception:
             if attempt == 9:
@@ -121,7 +157,9 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
     release = app / "releases" / (time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
     release.mkdir(parents=True)
     extract_release(archive, release)
-    verify_release(release)
+    manifest = verify_release(release)
+    expected_identity = read_release_identity(release, manifest=manifest)
+    previous_identity = read_release_identity(previous, allow_legacy=True) if previous is not None else None
     for required in ("main.py", "pyproject.toml", "tools/__init__.py"):
         if not (release / required).is_file():
             raise ValueError("Release is missing required application files")
@@ -153,7 +191,7 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
         temporary_entry.write_bytes(dispatcher)
         os.replace(temporary_entry, entry)
         run(command + ["restart", service], check=True)
-        wait_for_health(smoke, health_url)
+        wait_for_health(smoke, health_url, expected_identity)
         run(command + ["is-active", "--quiet", service], check=True)
     except BaseException:
         if activated:
@@ -166,7 +204,9 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
                 os.replace(temporary_entry, entry)
             if previous is not None or old_entry is not None:
                 run(command + ["restart", service], check=True)
-                wait_for_health(smoke, health_url)
+                if previous_identity is None:
+                    print("Legacy rollback: protocol recovery checked; this prior release has no build identity.")
+                wait_for_health(smoke, health_url, previous_identity)
             else:
                 run(command + ["stop", service], check=True)
         raise
