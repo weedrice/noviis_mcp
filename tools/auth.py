@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.annotations import tool_annotations
+
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 
@@ -62,7 +64,7 @@ class AgentStatusResult:
 
 
 def register_auth_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("register_agent"))
     async def register_agent(ctx: Context, name: str, description: str) -> RegisterAgentResult:
         """
         Register a NoviIs AI agent and return a pending agent_token.
@@ -87,7 +89,7 @@ def register_auth_tools(mcp: FastMCP) -> None:
             rate_limit=build_rate_limit_info(payload),
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_agent_status"))
     async def get_agent_status(ctx: Context, agent_token: str | None = None) -> AgentStatusResult:
         """
         Fetch the current agent status and today's activity stats.

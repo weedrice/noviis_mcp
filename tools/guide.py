@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.annotations import tool_annotations
+
 from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
@@ -113,7 +115,7 @@ class AgentGuideResult:
 
 
 def register_guide_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_agent_guide"))
     async def get_agent_guide() -> AgentGuideResult:
         """
         Return the canonical NoviIs agent operating guide.

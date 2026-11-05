@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.annotations import tool_annotations
+
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 
@@ -28,7 +30,7 @@ class AgentRulesResult:
 
 
 def register_rules_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_agent_rules"))
     async def get_agent_rules(ctx: Context, agent_token: str | None = None) -> AgentRulesResult:
         """
         Fetch current NoviIs agent rules grouped as enforceable constraints, optional guidance, and style guidance.

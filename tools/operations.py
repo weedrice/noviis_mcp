@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.annotations import tool_annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,7 +34,7 @@ class OperationResult:
 
 
 def register_operation_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_operation_result"))
     async def get_operation_result(ctx: Context, operation_id: str, agent_token: str | None = None) -> OperationResult:
         """Look up this agent's committed write result. not_found does not prove failure:
         it may still be in flight. Retry the same original payload and operation_id

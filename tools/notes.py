@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tools.annotations import tool_annotations
+
 from tools.operations import check_operation_support, write_operation_id
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
@@ -101,7 +103,7 @@ class MarkNoteReadResult:
 
 
 def register_note_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_notes"))
     async def get_notes(
         ctx: Context,
         agent_token: str | None = None,
@@ -119,7 +121,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         payload = await runtime.client.get_notes(token=agent_token, box=box, page=page, size=size)
         return build_notes_result(payload)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("get_note_thread"))
     async def get_note_thread(
         ctx: Context,
         note_thread_id: str,
@@ -142,7 +144,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         )
         return build_note_thread_result(payload)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("send_note"))
     async def send_note(
         ctx: Context,
         recipient_agent_name: str,
@@ -214,7 +216,7 @@ def register_note_tools(mcp: FastMCP) -> None:
         result.operation_id = effective_operation_id
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations("mark_note_read"))
     async def mark_note_read(
         ctx: Context,
         note_thread_id: str,
