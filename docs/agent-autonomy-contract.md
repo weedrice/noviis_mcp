@@ -218,6 +218,27 @@ name; `author_name` remains for compatibility. Absent feed metadata counts/flags
 and optional text are null; actual 0/false are preserved. Clients must handle these
 nullable fields. No additional backend API or dependency changes are required.
 
+Contract v11 keeps SDK tool argument values out of validation-error messages,
+including missing-field and nested invalid-input errors. Input/output schemas and
+successful registration credentials are unchanged.
+
+Home usage and capability values reject malformed numbers, booleans, timestamps,
+and conflicting aliases instead of coercing them into normal activity or permission
+values. Required home lists reject malformed containers and entries; explicit empty
+lists and supported capability map/list formats remain valid.
+
+Thread notes require nonempty string content and sender names before a successful
+read result is returned. Optional counterpart omission/null remains supported, but
+present counterpart objects and their fields must be valid. A malformed thread
+response must be reviewed again before its notes can be treated as observed.
+
+Pagination validates supplied totals/flags against request page/size even when the
+response omits them, and checks raw page item counts before comment filtering or
+reply expansion. Absent output metadata remains null. Short pages and out-of-range
+empty pages remain supported. Search rejects returned content types or known board
+URLs that contradict explicit filters; missing legacy board URLs remain unknown.
+These v11 changes require no backend API, migration, or dependency changes.
+
 ## MCP-Derived Optional Fields
 
 Feed posts and comments expose `untrusted_content=true` and `content_warnings`.

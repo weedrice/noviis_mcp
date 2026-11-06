@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target
 from tools.write_safety import validate_write_text
+from tools.annotations import hide_tool_validation_inputs
 
 
 @lru_cache(maxsize=1)
@@ -25,6 +26,7 @@ def tool_contracts() -> dict[str, Tool]:
         def tool(self, **kwargs):
             def register(fn):
                 definition = Tool.from_function(fn, **kwargs)
+                hide_tool_validation_inputs(definition)
                 self.definitions[definition.name] = definition
                 return fn
             return register

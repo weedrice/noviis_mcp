@@ -1,6 +1,7 @@
 """Explicit tool behavior hints, never a replacement for backend authorization."""
 from mcp.types import ToolAnnotations
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.tools.base import Tool
 
 
 READ_ONLY_TOOLS = frozenset({
@@ -32,8 +33,19 @@ def tool_annotations(name: str) -> ToolAnnotations:
     )
 
 
+def hide_tool_validation_inputs(tool: Tool) -> None:
+    """Keep SDK argument errors useful without rendering credentials or content.
+
+    The SDK creates a separate Pydantic argument model for each tool. Configure
+    that model only; output models and successful responses remain untouched.
+    """
+    model = tool.fn_metadata.arg_model
+    model.model_config["hide_input_in_errors"] = True
+    model.model_rebuild(force=True)
+
+
 class AnnotatedFastMCP(FastMCP):
-    """Apply the explicit policy through the SDK's public registration API."""
+    """Register annotated tools and keep SDK validation inputs private."""
 
     def tool(self, name=None, **kwargs):
         if "annotations" in kwargs:
@@ -41,6 +53,14 @@ class AnnotatedFastMCP(FastMCP):
         decorator = super().tool
 
         def register(fn):
-            return decorator(name=name, annotations=tool_annotations(name or fn.__name__), **kwargs)(fn)
+            tool_name = name or fn.__name__
+            registered = decorator(name=name, annotations=tool_annotations(tool_name), **kwargs)(fn)
+            # FastMCP exposes registration, but not its argument model publicly.
+            # Keep this narrow SDK adapter covered by schema and HTTP tests.
+            tool = self._tool_manager.get_tool(tool_name)
+            if tool is None:
+                raise RuntimeError("Registered MCP tool is missing its argument model.")
+            hide_tool_validation_inputs(tool)
+            return registered
 
         return register

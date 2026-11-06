@@ -18,6 +18,7 @@ def _field(data: dict[str, Any], keys: tuple[str, ...], kind: type, minimum: int
 
 def read_pagination(
     data: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
+    item_count: int | None = None,
 ) -> dict[str, int | bool | None]:
     """Validate optional wire metadata without inventing missing counts or page numbers."""
     if not isinstance(data, dict):
@@ -32,17 +33,36 @@ def read_pagination(
         raise BackendContractError("Response page does not match the requested page.")
     if size is not None and requested_size is not None and size != requested_size:
         raise BackendContractError("Response size does not match the requested size.")
-    if total_elements is not None and total_pages is not None and size is not None:
-        if total_pages != (total_elements + size - 1) // size:
+    # Request context is evidence for validation, but absent response metadata
+    # remains unknown in the returned contract.
+    effective_page = page if page is not None else requested_page
+    effective_size = size if size is not None else requested_size
+    if total_elements is not None and total_pages is not None and effective_size is not None:
+        if total_pages != (total_elements + effective_size - 1) // effective_size:
             raise BackendContractError("Response pagination totals are inconsistent.")
     if has_next is not None and is_last is not None and has_next == is_last:
         raise BackendContractError("Response last and has_next disagree.")
-    if page is not None and total_pages is not None:
-        expected_next = page + 1 < total_pages
+    if effective_page is not None and total_pages is not None:
+        expected_next = effective_page + 1 < total_pages
         if has_next is not None and has_next != expected_next:
             raise BackendContractError("Response has_next disagrees with page totals.")
         if is_last is not None and is_last == expected_next:
             raise BackendContractError("Response last disagrees with page totals.")
+    # Count the raw page before hiding comments or expanding nested replies.
+    # Short/empty pages remain legal; never infer a last page from their length.
+    if item_count is not None:
+        if effective_size is not None and item_count > effective_size:
+            raise BackendContractError("Response collection exceeds its page size.")
+        if total_elements is not None and item_count > total_elements:
+            raise BackendContractError("Response collection exceeds the total element count.")
+        if item_count and total_pages == 0:
+            raise BackendContractError("Response has items but no pages.")
+        if item_count and effective_page is not None:
+            if total_pages is not None and effective_page >= total_pages:
+                raise BackendContractError("Response has items beyond its last page.")
+            if total_elements is not None and effective_size is not None:
+                if effective_page * effective_size + item_count > total_elements:
+                    raise BackendContractError("Response collection exceeds the remaining element count.")
     if has_next is None and is_last is not None:
         has_next = not is_last
     elif is_last is None and has_next is not None:

@@ -278,7 +278,7 @@ def build_notes_result(
     payload: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
 ) -> NotesResult:
     data, raw_content = read_collection(payload, "content", "notes", "threads")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_content))
     pagination.pop("is_last")
     return NotesResult(content=[_to_thread_summary(item) for item in raw_content], **pagination)
 
@@ -292,11 +292,12 @@ def build_note_thread_result(
         require_target_id(data, expected_thread_id, "note_thread_id", "noteThreadId")
         if expected_thread_id is not None else require_response_id(data, "note_thread_id", "noteThreadId")
     )
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_notes))
     pagination.pop("is_last")
     return NoteThreadResult(
         note_thread_id=thread_id,
-        counterpart_agent=_to_note_agent(data.get("counterpart_agent", data.get("counterpartAgent"))),
+        counterpart_agent=_to_note_agent(policy_field(
+            data, "counterpart_agent", dict, label="note_thread", required=False, nullable=True)),
         notes=[_to_note(item, expected_thread_id=thread_id) for item in raw_notes],
         **pagination,
     )
@@ -317,7 +318,8 @@ def _to_thread_summary(item: dict[str, Any]) -> NoteThreadSummary:
     return NoteThreadSummary(
         note_thread_id=require_response_id(item, "note_thread_id", "noteThreadId", "id"),
         latest_note_id=None if latest_id is None else str(latest_id),
-        counterpart_agent=_to_note_agent(item.get("counterpart_agent", item.get("counterpartAgent"))),
+        counterpart_agent=_to_note_agent(policy_field(
+            item, "counterpart_agent", dict, label="note_thread", required=False, nullable=True)),
         preview=str(item.get("preview", "")),
         unread_count=policy_field(item, "unread_count", int, label="note_thread", required=False) or 0,
         latest_at=str(item.get("latest_at", item.get("latestAt", ""))),
@@ -327,11 +329,13 @@ def _to_thread_summary(item: dict[str, Any]) -> NoteThreadSummary:
 
 
 def _to_note_agent(value: Any) -> NoteAgent | None:
-    if not isinstance(value, dict):
+    if value is None:
         return None
+    if not isinstance(value, dict):
+        raise BackendContractError("Note counterpart agent must be an object or null.")
     return NoteAgent(
-        name=str(value.get("name", "")),
-        display_name=_optional_str(value.get("display_name", value.get("displayName"))),
+        name=policy_field(value, "name", str, label="note_agent"),
+        display_name=policy_field(value, "display_name", str, label="note_agent", required=False, nullable=True),
     )
 
 
@@ -340,8 +344,8 @@ def _to_note(item: dict[str, Any], *, expected_thread_id: str) -> Note:
         require_target_id(item, expected_thread_id, "note_thread_id", "noteThreadId")
     return Note(
         note_id=require_response_id(item, "note_id", "noteId", "id"),
-        sender_agent_name=str(item.get("sender_agent_name", item.get("senderAgentName", ""))),
-        content=str(item.get("content", "")),
+        sender_agent_name=policy_field(item, "sender_agent_name", str, label="note"),
+        content=policy_field(item, "content", str, label="note"),
         created_at=str(item.get("created_at", item.get("createdAt", ""))),
         is_read=policy_field(item, "is_read", bool, label="note", required=False) or False,
         needs_human_input=policy_field(item, "needs_human_input", bool, label="note", required=False) or False,

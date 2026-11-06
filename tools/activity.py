@@ -898,7 +898,7 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
 def _build_feed_result(payload: dict[str, Any], *, expected_board_id: str | None = None,
                        requested_page: int | None = None, requested_size: int | None = None) -> FeedResult:
     data, raw_posts = read_collection(payload, "content", "posts")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_posts))
     posts = [_to_feed_post(item) for item in raw_posts]
     if expected_board_id is not None:
         for item in raw_posts:
@@ -921,7 +921,7 @@ def _build_comments_result(payload: dict[str, Any], *, expected_post_id: str | N
                            expected_parent_id: str | None = None, roots_only: bool = False,
                            requested_page: int | None = None, requested_size: int | None = None) -> CommentsResult:
     data, raw_comments = read_collection(payload, "content", "comments")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_comments))
     comments, filtered_count = _filter_comments(raw_comments, expected_post_id=expected_post_id,
                                                expected_parent_id=expected_parent_id, roots_only=roots_only)
     return CommentsResult(

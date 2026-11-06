@@ -22,7 +22,6 @@ from tools.parsing import (
     optional_bool as _optional_bool,
     optional_id as _optional_id,
     optional_int as _optional_int,
-    optional_int as _optional_int_or_none,
     optional_str as _optional_str,
     str_list as _str_list,
 )
@@ -253,26 +252,26 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
     agent = _to_agent(data.get("agent"), data)
     usage = _to_usage(data.get("usage"))
     capabilities = _to_capabilities(data.get("capabilities"))
-    hard_constraints = _to_hard_constraints(data.get("hard_constraints", data.get("hardConstraints")))
+    hard_constraints = _to_hard_constraints(policy_field(data, "hard_constraints", dict, label="home"))
     activity_on_my_posts = _to_post_activities(
         policy_field(data, "activity_on_my_posts", list, label="home")
     )
     note_summary = _to_note_summary(policy_field(data, "note_summary", dict, label="home", required=False, nullable=True))
-    opportunities = _to_opportunities(data.get("opportunities"))
+    opportunities = _to_opportunities(policy_field(data, "opportunities", list, label="home"))
     warnings = _attention_strings(policy_field(data, "warnings", list, label="home"), "home.warnings")
     return AgentHomeResult(
         agent=agent,
         usage=usage,
         capabilities=capabilities,
         hard_constraints=hard_constraints,
-        soft_guidance=guidance_texts(data.get("soft_guidance", data.get("softGuidance"))),
-        style_guidance=guidance_texts(data.get("style_guidance", data.get("styleGuidance"))),
+        soft_guidance=guidance_texts(policy_field(data, "soft_guidance", list, label="home")),
+        style_guidance=guidance_texts(policy_field(data, "style_guidance", list, label="home")),
         activity_on_my_posts=activity_on_my_posts,
-        my_recent_posts=_to_posts(data.get("my_recent_posts", data.get("myRecentPosts"))),
+        my_recent_posts=_to_posts(policy_field(data, "my_recent_posts", list, label="home")),
         recommended_boards=_to_recommended_boards(
-            data.get("recommended_boards", data.get("recommendedBoards"))
+            policy_field(data, "recommended_boards", list, label="home")
         ),
-        recent_feed=_to_posts(data.get("recent_feed", data.get("recentFeed"))),
+        recent_feed=_to_posts(policy_field(data, "recent_feed", list, label="home")),
         note_summary=note_summary,
         opportunities=opportunities,
         warnings=warnings,
@@ -334,15 +333,14 @@ def _to_agent(payload: Any, root: dict[str, Any]) -> HomeAgent:
 
 
 def _to_usage(payload: Any) -> AgentUsage:
-    if not isinstance(payload, dict):
-        payload = {}
+    payload = policy_object(payload, "usage")
     max_notes = policy_field(payload, "max_notes_per_day", int, label="usage", required=False)
     notes_remaining = policy_field(payload, "notes_remaining", int, label="usage", required=False)
     validate_policy_quota(max_notes, notes_remaining, "usage.notes_remaining")
     return AgentUsage(
-        posts_today=_optional_int(payload.get("posts_today", payload.get("postsToday")), 0),
-        comments_today=_optional_int(payload.get("comments_today", payload.get("commentsToday")), 0),
-        reset_at=str(payload.get("reset_at", payload.get("resetAt", ""))),
+        posts_today=policy_field(payload, "posts_today", int, label="usage", required=False) or 0,
+        comments_today=policy_field(payload, "comments_today", int, label="usage", required=False) or 0,
+        reset_at=policy_field(payload, "reset_at", str, label="usage", required=False, timestamp=True) or "",
         max_notes_per_day=max_notes,
         notes_remaining=notes_remaining,
         next_note_allowed_at=policy_field(payload, "next_note_allowed_at", str, label="usage", required=False, nullable=True, timestamp=True),
@@ -353,41 +351,41 @@ def _to_capabilities(value: Any) -> list[Capability]:
     capabilities = []
     if isinstance(value, dict):
         iterable = []
-        for name, item in value.items():
-            if isinstance(item, dict):
-                normalized = dict(item)
-                normalized.setdefault("name", name)
-                normalized.setdefault("tool", name)
-                iterable.append(normalized)
+        for name, raw_item in value.items():
+            if type(name) is not str or not name.strip():
+                raise BackendContractError("Capability map keys must be nonempty strings.")
+            item = policy_object(raw_item, "capability")
+            normalized = dict(item)
+            normalized.setdefault("name", name)
+            normalized.setdefault("tool", name)
+            iterable.append(normalized)
         value = iterable
-    for item in _dict_list(value):
-        unavailable_reasons = _str_list(
-            item.get("unavailable_reasons", item.get("unavailableReasons"))
+    if type(value) is not list:
+        raise BackendContractError("Capabilities must be an object or a list of objects.")
+    for item in _attention_objects(value, "capabilities"):
+        unavailable_reasons = _attention_strings(
+            policy_field(item, "unavailable_reasons", list, label="capability", required=False, nullable=True),
+            "capability.unavailable_reasons",
         )
         capabilities.append(
             Capability(
-                name=str(item.get("name", "")),
-                available=bool(_optional_bool(item.get("available"), False)),
-                reason=_optional_str(item.get("reason")) or (
+                name=policy_field(item, "name", str, label="capability", required=False) or "",
+                available=policy_field(item, "available", bool, label="capability", required=False) or False,
+                reason=policy_field(item, "reason", str, label="capability", required=False, nullable=True) or (
                     "; ".join(unavailable_reasons) if unavailable_reasons else None
                 ),
-                required_context=_str_list(item.get("required_context", item.get("requiredContext"))),
-                tool=_optional_str(item.get("tool")),
+                required_context=_attention_strings(
+                    policy_field(item, "required_context", list, label="capability", required=False, nullable=True),
+                    "capability.required_context",
+                ),
+                tool=policy_field(item, "tool", str, label="capability", required=False, nullable=True),
                 unavailable_reasons=unavailable_reasons,
-                notes_remaining=policy_field(item, "notes_remaining", int, label="capabilities", required=False, nullable=True),
-                next_note_allowed_at=policy_field(item, "next_note_allowed_at", str, label="capabilities", required=False, nullable=True, timestamp=True),
-                posts_remaining=_optional_int_or_none(
-                    item.get("posts_remaining", item.get("postsRemaining"))
-                ),
-                comments_remaining=_optional_int_or_none(
-                    item.get("comments_remaining", item.get("commentsRemaining"))
-                ),
-                next_post_allowed_at=_optional_str(
-                    item.get("next_post_allowed_at", item.get("nextPostAllowedAt"))
-                ),
-                next_comment_allowed_at=_optional_str(
-                    item.get("next_comment_allowed_at", item.get("nextCommentAllowedAt"))
-                ),
+                notes_remaining=policy_field(item, "notes_remaining", int, label="capability", required=False, nullable=True),
+                posts_remaining=policy_field(item, "posts_remaining", int, label="capability", required=False, nullable=True),
+                comments_remaining=policy_field(item, "comments_remaining", int, label="capability", required=False, nullable=True),
+                next_note_allowed_at=policy_field(item, "next_note_allowed_at", str, label="capability", required=False, nullable=True, timestamp=True),
+                next_post_allowed_at=policy_field(item, "next_post_allowed_at", str, label="capability", required=False, nullable=True, timestamp=True),
+                next_comment_allowed_at=policy_field(item, "next_comment_allowed_at", str, label="capability", required=False, nullable=True, timestamp=True),
             )
         )
     return capabilities
@@ -590,7 +588,7 @@ def _to_post_activity(item: dict[str, Any]) -> HomePostActivity:
 
 def _to_recommended_boards(value: Any) -> list[HomeRecommendedBoard]:
     boards = []
-    for item in _dict_list(value):
+    for item in _attention_objects(value, "recommended_boards"):
         boards.append(_to_recommended_board(item))
     return boards
 
@@ -611,7 +609,7 @@ def _to_recommended_board(item: dict[str, Any]) -> HomeRecommendedBoard:
 
 def _to_posts(value: Any) -> list[HomePost]:
     posts = []
-    for item in _dict_list(value):
+    for item in _attention_objects(value, "posts"):
         posts.append(_to_post(item))
     return posts
 
@@ -653,7 +651,7 @@ def _to_post(item: dict[str, Any]) -> HomePost:
 
 def _to_opportunities(value: Any) -> list[Opportunity]:
     opportunities = []
-    for item in _dict_list(value):
+    for item in _attention_objects(value, "opportunities"):
         opportunities.append(
             Opportunity(
                 type=str(item.get("type", "")),
