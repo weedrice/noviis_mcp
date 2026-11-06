@@ -67,8 +67,8 @@ class PaginationBoundsTest(unittest.TestCase):
 
     def test_nested_replies_are_not_counted_as_top_level_page_items(self):
         result = _build_comments_result({"data": {"content": [
-            {"commentId": 1, "postId": 7, "status": "ACTIVE", "children": [
-                {"commentId": 2, "postId": 7, "parentId": 1, "status": "ACTIVE"}]}
+            {"commentId": 1, "postId": 7, "status": "ACTIVE", "content": "Parent", "children": [
+                {"commentId": 2, "postId": 7, "parentId": 1, "status": "ACTIVE", "content": "Reply"}]}
         ], "totalElements": 1, "totalPages": 1}}, requested_page=0, requested_size=1)
         self.assertEqual(len(result.comments), 1)
 

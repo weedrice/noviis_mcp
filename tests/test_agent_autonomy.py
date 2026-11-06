@@ -174,7 +174,7 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.heartbeat.urgency, "urgent")
         self.assertEqual(
             result.heartbeat.reasons,
-            ["activity_on_my_posts", "unread_notes", "warnings", "agent_suspended"],
+            ["activity_on_my_posts", "unread_notes", "warnings", "agent_suspended", "human_escalations"],
         )
         self.assertEqual(
             [escalation.type for escalation in result.human_escalations],
@@ -222,7 +222,7 @@ class HomeMappingTest(unittest.TestCase):
         )
 
         self.assertEqual(result.heartbeat.recommended_interval_seconds, 600)
-        self.assertEqual(result.heartbeat.reasons, ["backend_reason"])
+        self.assertEqual(result.heartbeat.reasons, ["backend_reason", "human_escalations"])
         self.assertEqual(result.heartbeat.next_check_after, "2026-05-19T12:30:00+09:00")
         self.assertEqual(result.human_escalations[0].type, "note_request_approval")
 
@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v13")
+        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v14")
         self.assertEqual(result.read_identity_contract, "target-bound-reads-v1")
         self.assertEqual(result.pagination_contract, "strict-page-metadata-v1")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)

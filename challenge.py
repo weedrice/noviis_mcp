@@ -57,6 +57,7 @@ class ChallengeRecord:
     payload_digest: str
     answer: str
     expires_at: float
+    operation_id: str | None = None
     status: Literal["pending", "used", "expired", "failed"] = "pending"
     finished_at: float | None = None
 
@@ -85,6 +86,7 @@ class ChallengeManager:
         challenge_id: str | None = None,
     ) -> ChallengePrompt:
         owner_key = _owner_digest(owner_key)
+        operation_id = _operation_metadata(payload.get("operation_id"))
         payload_digest = _payload_digest(payload)
         now = self._clock()
         self._cleanup(now)
@@ -120,6 +122,7 @@ class ChallengeManager:
             payload_digest=payload_digest,
             answer=_calculate_answer(left, right, operation),
             expires_at=now + CHALLENGE_EXPIRES_SECONDS,
+            operation_id=operation_id,
         )
         state.issued_at.append(now)
         return ChallengePrompt(
@@ -136,6 +139,15 @@ class ChallengeManager:
         Known pending/expired/failed challenges still require normal authentication
         and verification before any replacement challenge or backend write.
         """
+        record = self._owned_record(owner_key, challenge_id)
+        if record.status == "used":
+            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+
+    def recovery_operation_id(self, *, owner_key: str, challenge_id: str) -> str | None:
+        """Return only the original UUID for this owner; never return request content."""
+        return self._owned_record(owner_key, challenge_id).operation_id
+
+    def _owned_record(self, owner_key: str, challenge_id: str) -> ChallengeRecord:
         owner_key = _owner_digest(owner_key)
         self._cleanup(self._clock())
         record = self._challenges.get(challenge_id)
@@ -144,8 +156,7 @@ class ChallengeManager:
                 "Challenge history is unavailable and the previous write outcome is unknown. "
                 "Inspect previous activity or the operation result before starting a new write."
             )
-        if record.status == "used":
-            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+        return record
 
     def verify_challenge(
         self,
@@ -275,6 +286,17 @@ def _owner_digest(owner_key: str) -> str:
     if not owner_key.strip() or len(owner_key) > 4096:
         raise ValueError("agent_token must be nonempty and at most 4096 characters.")
     return hashlib.sha256(owner_key.encode("utf-8")).hexdigest()
+
+
+def _operation_metadata(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("operation_id must be a canonical lowercase UUID.") from None
+    return value
 
 
 def _payload_digest(payload: dict[str, Any]) -> str:

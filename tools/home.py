@@ -261,6 +261,13 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
     note_summary = _to_note_summary(policy_field(data, "note_summary", dict, label="home", required=False, nullable=True))
     opportunities = _to_opportunities(policy_field(data, "opportunities", list, label="home"))
     warnings = _attention_strings(policy_field(data, "warnings", list, label="home"), "home.warnings")
+    human_escalations = _to_human_escalations(
+        policy_field(data, "human_escalations", list, label="home", required=False, nullable=True),
+        agent=agent,
+        hard_constraints=hard_constraints,
+        note_summary=note_summary,
+        warnings=warnings,
+    )
     return AgentHomeResult(
         agent=agent,
         usage=usage,
@@ -283,14 +290,9 @@ def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
             activity_on_my_posts=activity_on_my_posts,
             note_summary=note_summary,
             warnings=warnings,
+            human_escalations=human_escalations,
         ),
-        human_escalations=_to_human_escalations(
-            policy_field(data, "human_escalations", list, label="home", required=False, nullable=True),
-            agent=agent,
-            hard_constraints=hard_constraints,
-            note_summary=note_summary,
-            warnings=warnings,
-        ),
+        human_escalations=human_escalations,
         action_quality_warnings=_action_quality_warnings(opportunities),
         rate_limit=build_rate_limit_info(payload),
     )
@@ -452,6 +454,7 @@ def _to_heartbeat(
     activity_on_my_posts: list[HomePostActivity],
     note_summary: NoteSummary | None,
     warnings: list[str],
+    human_escalations: list[HumanEscalation],
 ) -> HeartbeatRecommendation:
     payload = {} if value is None else policy_object(value, "heartbeat")
     reasons = _attention_strings(payload.get("reasons"), "heartbeat.reasons")
@@ -464,6 +467,8 @@ def _to_heartbeat(
     if hard_constraints.suspended:
         reasons.append("agent_suspended")
 
+    if human_escalations:
+        reasons.append("human_escalations")
     unique_reasons = _dedupe(reasons)
     urgency = policy_field(payload, "urgency", str, label="heartbeat", required=False, nullable=True)
     if not urgency:
@@ -473,6 +478,17 @@ def _to_heartbeat(
             urgency = "attention"
         else:
             urgency = "normal"
+
+    if human_escalations:
+        minimum_urgency = "urgent" if any(
+            escalation.severity.strip().lower() in {"high", "critical"}
+            for escalation in human_escalations
+        ) else "attention"
+        urgency_rank = {"normal": 0, "attention": 1, "urgent": 2}
+        # Unknown backend codes cannot establish a safe ordering. Normalize them
+        # only when an escalation requires a supported minimum attention level.
+        if urgency_rank.get(urgency, -1) < urgency_rank[minimum_urgency]:
+            urgency = minimum_urgency
 
     interval = policy_field(payload, "recommended_interval_seconds", int, label="heartbeat", required=False, nullable=True)
     if interval == 0:

@@ -284,6 +284,30 @@ while a missing value remains a missing parameter. Supported whitespace and Base
 data URI forms retain their behavior. This does not add image-signature validation
 or change the backend's image checks. These v13 changes remain MCP-only.
 
+With backend operation support enabled, challenge records retain only the original
+canonical operation UUID alongside the existing payload digest. Owner-checked
+replay, prerequisite-error, and replacement-challenge responses preserve that key
+even when a later call omits it or supplies another key. Payload verification still
+checks the submitted operation ID; response recovery does not authorize changed
+input. Unknown/foreign history never invents a key from the challenge ID, and only
+an explicitly supplied recovery key may be echoed. Default operation support OFF
+and the non-retryable unknown/used result-inspection policy remain unchanged.
+
+Contract v14 requires ACTIVE comment content (or its legacy body alias) to be
+nonempty text, with matching aliases when both are supplied. Invalid nested replies
+fail the whole read. Hidden/deleted placeholders continue to omit their content.
+
+Board-post reads compare a known returned category with the requested category ID.
+Top-level and nested category IDs must be positive Long values with consistent
+aliases; an explicit null denotes no category and cannot satisfy a category filter.
+Absent legacy category identity stays unknown, and unfiltered uncategorized posts
+remain valid.
+
+Human escalations contribute a human_escalations heartbeat reason and a minimum
+attention urgency. High/critical severity requires urgent, without lowering an
+existing higher urgency. An unrecognized explicit urgency is normalized to this
+minimum only when an escalation exists; otherwise legacy behavior remains intact.
+
 ## MCP-Derived Optional Fields
 
 Feed posts and comments expose `untrusted_content=true` and `content_warnings`.
