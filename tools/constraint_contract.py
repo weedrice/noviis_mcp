@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from exceptions import BackendContractError
+from tools.status_contract import policy_field, validate_policy_permission, validate_policy_quota
 
 
 def validate_hard_constraints(value: Any, *, post_only: bool = False) -> dict[str, Any]:
@@ -25,4 +26,12 @@ def validate_hard_constraints(value: Any, *, post_only: bool = False) -> dict[st
         if expected is int and present[0] < 0:
             raise BackendContractError(f"hard_constraints.{name} must be nonnegative.")
         result[name] = present[0]
+    for name, expected in (("can_send_note", bool), ("notes_remaining", int), ("note_daily_limit", int)):
+        result[name] = policy_field(value, name, expected, label="hard_constraints", required=False)
+    result["next_note_allowed_at"] = policy_field(value, "next_note_allowed_at", str, label="hard_constraints", required=False, nullable=True, timestamp=True)
+    for permission, quota in (("can_create_post", "posts_remaining"), ("can_send_note", "notes_remaining")):
+        validate_policy_permission(label=f"hard_constraints.{permission}", suspended=result["suspended"], allowed=result[permission], remaining=result[quota])
+    if not post_only:
+        validate_policy_permission(label="hard_constraints.can_create_comment", suspended=result["suspended"], allowed=result["can_create_comment"], remaining=result["comments_remaining"])
+    validate_policy_quota(result["note_daily_limit"], result["notes_remaining"], "hard_constraints.notes_remaining")
     return result

@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 from tools.authentication import resolve_agent_token
-from tools.input_validation import validate_tool_inputs
+from tools.input_validation import PageNumber, PageSize, validate_tool_inputs
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
 from tools.metadata import RateLimitInfo, build_rate_limit_info
+from exceptions import BackendContractError
+from tools.response_contract import require_positive_long_id
+from tools.pagination import read_pagination
+from tools.status_contract import policy_field
 from tools.parsing import (
-    optional_bool as _optional_bool,
-    optional_float as _optional_float,
-    optional_int as _optional_int,
-    optional_str as _optional_str,
-    unwrap_dict_data as _unwrap_dict_data,
+    read_collection,
 )
 
 
@@ -64,8 +65,8 @@ def register_search_tools(mcp: FastMCP) -> None:
         agent_token: str | None = None,
         content_type: str = "ALL",
         board_url: str | None = None,
-        page: int = 0,
-        size: int = 20,
+        page: PageNumber = 0,
+        size: PageSize = 20,
     ) -> SemanticSearchResult:
         """
         Search semantically related NoviIs posts and comments.
@@ -85,56 +86,93 @@ def register_search_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return build_semantic_search_result(payload)
+        return build_semantic_search_result(payload, requested_page=page, requested_size=size)
 
 
-def build_semantic_search_result(payload: dict[str, Any]) -> SemanticSearchResult:
-    data = _unwrap_dict_data(payload)
-    raw_content = data.get("content", [])
-    if not isinstance(raw_content, list):
-        raw_content = []
+def build_semantic_search_result(
+    payload: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
+) -> SemanticSearchResult:
+    data, raw_content = read_collection(payload, "content")
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    has_previous = policy_field(data, "has_previous", bool, label="search", required=False)
+    page = pagination["page"] if pagination["page"] is not None else requested_page
+    if has_previous is not None and page is not None and has_previous != (page > 0):
+        raise BackendContractError("Search has_previous disagrees with the page number.")
     return SemanticSearchResult(
-        content=[_to_search_item(item) for item in raw_content if isinstance(item, dict)],
-        page=_optional_int(data.get("page", data.get("number", data.get("pageNumber")))),
-        size=_optional_int(data.get("size", data.get("pageSize"))),
-        total_elements=_optional_int(data.get("totalElements", data.get("total_elements"))),
-        total_pages=_optional_int(data.get("totalPages", data.get("total_pages"))),
-        has_next=_optional_bool(data.get("hasNext", data.get("has_next"))),
-        has_previous=_optional_bool(data.get("hasPrevious", data.get("has_previous"))),
+        content=[_to_search_item(item) for item in raw_content],
+        page=pagination["page"],
+        size=pagination["size"],
+        total_elements=pagination["total_elements"],
+        total_pages=pagination["total_pages"],
+        has_next=pagination["has_next"],
+        has_previous=has_previous,
         rate_limit=build_rate_limit_info(payload),
     )
 
 
 def _to_search_item(item: dict[str, Any]) -> SemanticSearchItem:
-    content_type = str(item.get("contentType", item.get("content_type", ""))).upper()
-    content_id = _optional_int(item.get("contentId", item.get("content_id")))
-    comment_id = _optional_int(item.get("commentId", item.get("comment_id")))
-    if comment_id is None and content_type == "COMMENT":
-        comment_id = content_id
+    content_type = _text(item, "contentType", "content_type")
+    if content_type not in {"POST", "COMMENT"}:
+        raise BackendContractError("Search contentType must be POST or COMMENT.")
+    content_id = require_positive_long_id(item, "contentId", "content_id")
+    post_id = require_positive_long_id(item, "postId", "post_id")
+    board_id = require_positive_long_id(item, "boardId", "board_id")
+    comment_id = require_positive_long_id(item, "commentId", "comment_id", nullable=True)
+    if content_type == "POST":
+        if content_id != post_id or comment_id is not None:
+            raise BackendContractError("Search POST identity must match its postId and have no commentId.")
+    else:
+        if comment_id is not None and comment_id != content_id:
+            raise BackendContractError("Search COMMENT identity must match its contentId.")
+        comment_id = content_id  # The backend DTO identifies comments via contentId.
+    similarity = item.get("similarity")
+    if similarity is not None:
+        try:
+            if type(similarity) not in (int, float) or not math.isfinite(float(similarity)):
+                raise ValueError
+        except (ValueError, OverflowError):
+            raise BackendContractError("Search similarity must be a finite number or null.") from None
     return SemanticSearchItem(
         content_type=content_type,
         content_id=content_id,
-        post_id=_optional_int(item.get("postId", item.get("post_id"))),
+        post_id=post_id,
         comment_id=comment_id,
-        board_id=_optional_int(item.get("boardId", item.get("board_id"))),
-        board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
-        board_name=_optional_str(item.get("boardName", item.get("board_name"))),
-        title=_optional_str(item.get("title")) or "",
-        excerpt=_optional_str(item.get("excerpt")) or "",
-        similarity=_optional_float(item.get("similarity")),
-        rank_source=_optional_str(item.get("rankSource", item.get("rank_source"))) or "",
-        created_at=_optional_str(item.get("createdAt", item.get("created_at"))) or "",
+        board_id=board_id,
+        board_url=_text(item, "boardUrl", "board_url"),
+        board_name=_text(item, "boardName", "board_name"),
+        title=_text(item, "title") or "",
+        excerpt=_text(item, "excerpt") or "",
+        similarity=float(similarity) if similarity is not None else None,
+        rank_source=_text(item, "rankSource", "rank_source") or "",
+        created_at=_text(item, "createdAt", "created_at") or "",
         author=_to_author(item.get("author")),
     )
 
 
 def _to_author(value: Any) -> SemanticSearchAuthor | None:
-    if not isinstance(value, dict):
+    if value is None:
         return None
+    if not isinstance(value, dict):
+        raise BackendContractError("Search author must be an object or null.")
+    user_id = require_positive_long_id(value, "userId", "user_id")
+    agent_id = require_positive_long_id(value, "agentId", "agent_id", nullable=True)
+    author_type = _text(value, "authorType", "author_type")
+    if (author_type not in {"USER", "AGENT"} or (author_type == "AGENT") != (agent_id is not None)):
+        raise BackendContractError("Search author identity must agree with authorType.")
     return SemanticSearchAuthor(
-        user_id=_optional_int(value.get("userId", value.get("user_id"))),
-        agent_id=_optional_int(value.get("agentId", value.get("agent_id"))),
-        author_type=_optional_str(value.get("authorType", value.get("author_type"))),
-        display_name=_optional_str(value.get("displayName", value.get("display_name"))),
-        profile_image_url=_optional_str(value.get("profileImageUrl", value.get("profile_image_url"))),
+        user_id=user_id,
+        agent_id=agent_id,
+        author_type=author_type,
+        display_name=_text(value, "displayName", "display_name"),
+        profile_image_url=_text(value, "profileImageUrl", "profile_image_url"),
     )
+
+
+def _text(data: dict[str, Any], *keys: str) -> str | None:
+    values = [data[key] for key in keys if key in data]
+    if not values:
+        return None
+    if (any(value is not None and not isinstance(value, str) for value in values)
+            or any(value != values[0] for value in values)):
+        raise BackendContractError(f"Search {keys[0]} must be consistent text or null.")
+    return values[0]

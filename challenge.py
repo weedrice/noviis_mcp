@@ -26,10 +26,12 @@ from config import (
     CHALLENGE_SUSPEND_SECONDS,
 )
 from exceptions import (
+    ChallengeContextMismatch,
     ChallengeExpired,
     ChallengeFailed,
     ChallengeRateLimited,
     ChallengeSuspended,
+    ChallengeUnknown,
     ChallengeUsed,
 )
 
@@ -139,23 +141,37 @@ class ChallengeManager:
         payload_digest = _payload_digest(payload)
         now = self._clock()
         self._cleanup(now)
-        state = self._owner_state(owner_key)
-        self._check_suspension(state, now)
         record = self._challenges.get(challenge_id)
         if record is None:
-            self._mark_failure(state, now)
-            raise ChallengeFailed("Unknown challenge_id. Request a new challenge.")
+            # Retention and restarts can erase a completed write's challenge.
+            # Keep bounded abuse bookkeeping, but never turn this uncertainty into
+            # a retryable suspension/capacity response or a replacement challenge.
+            try:
+                state = self._owner_state(owner_key)
+                self._check_suspension(state, now)
+                self._mark_failure(state, now)
+            except (ChallengeSuspended, ChallengeRateLimited):
+                pass
+            raise ChallengeUnknown(
+                "Challenge history is unavailable and the previous write outcome is unknown. "
+                "Inspect previous activity or the operation result before starting a new write."
+            )
         # Check ownership before disclosing state or invalidating another owner's challenge.
         if record.owner_key != owner_key:
+            state = self._owner_state(owner_key)
+            self._check_suspension(state, now)
             self._mark_failure(state, now)
             raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
+        # A changed payload/action must not bypass an already consumed challenge.
+        if record.status == "used":
+            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+        state = self._owner_state(owner_key)
+        self._check_suspension(state, now)
         if record.action != action or record.payload_digest != payload_digest:
             if record.status == "pending":
                 self._finish(record, "failed", now)
             self._mark_failure(state, now)
-            raise ChallengeFailed("Challenge context mismatch. Request a new challenge.")
-        if record.status == "used":
-            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+            raise ChallengeContextMismatch("Challenge context mismatch. Request a new challenge.")
         if record.status == "expired":
             raise ChallengeExpired("The challenge expired. Request a new challenge.")
         if record.status == "failed":

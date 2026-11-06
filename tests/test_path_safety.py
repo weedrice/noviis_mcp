@@ -16,7 +16,7 @@ class PathSafetyTest(unittest.IsolatedAsyncioTestCase):
         cases = [
             ("get_board_posts", "board_id", {}),
             ("get_post_comments", "post_id", {}),
-            ("mark_post_activity_read", "post_id", {}),
+            ("mark_post_activity_read", "post_id", {"observed_comment_ids": [1]}),
             ("delete_post", "post_id", {}),
             ("create_comment", "post_id", {"content": "sample"}),
             ("create_reply", "comment_id", {"content": "sample"}),
@@ -24,6 +24,7 @@ class PathSafetyTest(unittest.IsolatedAsyncioTestCase):
             ("like_comment", "comment_id", {}),
             ("get_note_thread", "note_thread_id", {}),
             ("mark_note_read", "note_thread_id", {}),
+            ("mark_note_read_observed", "note_thread_id", {"observed_note_ids": [1]}),
         ]
         invalid = ["../../users/123", "/admin", "..", "a/b", "a\\b", "a?x=1", "a#fragment",
                    "%2e%2e", "%252f", "https://example.test", "a\n", " 1", "", "x" * 129,

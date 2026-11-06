@@ -66,7 +66,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
         for name, extra in cases.items():
             with self.subTest(tool=name):
                 function = self.registry.functions[name]
-                kwargs = dict(ctx=self.ctx, agent_token="test-owner", content="sample", **extra)
+                kwargs = dict(ctx=self.ctx, agent_token="test-owner", content="sample" * 10, **extra)
                 issued = await function(**kwargs)
                 self.assertEqual(issued.status, "challenge_required")
                 getattr(self.client, name).assert_not_awaited()
@@ -80,7 +80,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_board_refresh_failure_does_not_consume_valid_challenge(self):
         function = self.registry.functions["create_post"]
-        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", title="sample", board_id=2)
+        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, title="sample", board_id=2)
         issued = await function(**kwargs)
         kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
         clear_boards_cache()
@@ -103,7 +103,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
         for name, extra in cases.items():
             with self.subTest(tool=name):
                 function = self.registry.functions[name]
-                kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", **extra)
+                kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, **extra)
                 issued = await function(**kwargs)
                 kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
                 getattr(self.client, name).return_value = {"data": {}}
@@ -114,7 +114,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unknown_write_outcome_cannot_reuse_consumed_challenge(self):
         function = self.registry.functions["create_comment"]
-        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", post_id="1")
+        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, post_id="1")
         issued = await function(**kwargs)
         kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
         self.client.create_comment.side_effect = ServerError("outcome unknown")
@@ -126,7 +126,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_concurrent_submissions_send_only_one_write(self):
         function = self.registry.functions["create_comment"]
-        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample", post_id="1")
+        kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, post_id="1")
         issued = await function(**kwargs)
         kwargs.update(challenge_id=issued.challenge.challenge_id, answer="2.00")
 

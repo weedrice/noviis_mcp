@@ -7,10 +7,12 @@ from uuid import uuid4
 from exceptions import (
     AgentSuspended,
     BackendContractError,
+    ChallengeContextMismatch,
     ChallengeExpired,
     ChallengeFailed,
     ChallengeRateLimited,
     ChallengeSuspended,
+    ChallengeUnknown,
     ChallengeUsed,
     PermissionDenied,
 )
@@ -52,7 +54,10 @@ def issue_challenge_result(
 ) -> _Result:
     challenge_id = str(uuid4())
     payload = dict(payload)
-    operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
+    original_operation_id = payload.get("operation_id")
+    retained_operation_id = (write_operation_id(original_operation_id, original_operation_id)
+                             if original_operation_id is not None else None)
+    operation_id = write_operation_id(challenge_id, original_operation_id)
     if operation_id is not None or "operation_id" in payload:
         payload["operation_id"] = operation_id
     try:
@@ -63,7 +68,7 @@ def issue_challenge_result(
             payload=payload,
         )
     except (ChallengeSuspended, ChallengeRateLimited) as exc:
-        return _limited_result(result_factory, exc)
+        return _limited_result(result_factory, exc, operation_id=retained_operation_id)
     return result_factory(
         status="challenge_required",
         challenge=challenge,
@@ -83,7 +88,9 @@ def verify_or_reissue_challenge(
     payload: dict[str, Any],
     challenge_id: str,
     answer: str,
+    reissue_context_mismatch: bool = True,
 ) -> _Result | None:
+    operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
     try:
         runtime.challenge_manager.verify_challenge(
             owner_key=owner_key,
@@ -93,15 +100,24 @@ def verify_or_reissue_challenge(
             payload=payload,
         )
     except (ChallengeSuspended, ChallengeRateLimited) as exc:
-        return _limited_result(result_factory, exc)
-    except ChallengeUsed as exc:
+        return _limited_result(result_factory, exc, operation_id=operation_id)
+    except (ChallengeUsed, ChallengeUnknown) as exc:
         return result_factory(
             status="blocked",
-            error="challenge_used",
+            error=challenge_error_code(exc),
+            operation_id=operation_id,
             message=str(exc),
             retryable=False,
         )
     except (ChallengeExpired, ChallengeFailed) as exc:
+        if isinstance(exc, ChallengeContextMismatch) and not reissue_context_mismatch:
+            return result_factory(
+                status="blocked",
+                error="challenge_context_mismatch",
+                operation_id=operation_id,
+                message="The write target or payload changed. Review the current target and original write before requesting a new challenge.",
+                retryable=False,
+            )
         return issue_challenge_result(
             runtime=runtime,
             result_factory=result_factory,
@@ -115,11 +131,13 @@ def verify_or_reissue_challenge(
 
 
 def _limited_result(
-    result_factory: Callable[..., _Result], exc: ChallengeSuspended | ChallengeRateLimited
+    result_factory: Callable[..., _Result], exc: ChallengeSuspended | ChallengeRateLimited,
+    *, operation_id: str | None = None,
 ) -> _Result:
     suspended = isinstance(exc, ChallengeSuspended)
     return result_factory(
         status="challenge_suspended" if suspended else "challenge_rate_limited",
+        operation_id=operation_id,
         error="challenge_suspended" if suspended else exc.code,
         message=str(exc),
         retry_after_seconds=exc.retry_after,
@@ -132,4 +150,6 @@ def challenge_error_code(exc: Exception) -> str:
         return "challenge_expired"
     if isinstance(exc, ChallengeUsed):
         return "challenge_used"
+    if isinstance(exc, ChallengeUnknown):
+        return "challenge_unknown"
     return "challenge_failed"

@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, resource_id, validate_tool_inputs
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target
 from tools.write_safety import validate_write_text
 
 
@@ -54,6 +54,9 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
     contract = tool_contracts().get(tool_name)
     if contract is None:
         return params, sorted(params), [], f"Unsupported MCP tool in opportunity action: {tool_name}"
+    # Use the same SDK compatibility step as Tool.run (JSON-encoded arrays).
+    # Strict pagination still rejects numeric strings, floats and booleans.
+    params = contract.fn_metadata.pre_parse_json(params)
     invalid = set(params) - set(contract.parameters["properties"])
     missing = set(contract.parameters.get("required", [])) - set(params)
     try:
@@ -66,15 +69,29 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
         if name in invalid:
             continue
         try:
-            validate_tool_inputs({name: value})
+            validate_tool_inputs({name: value}, tool_name=tool_name)
             if name in RESOURCE_ID_PARAMS and value is not None:
                 params[name] = resource_id(value)
+            if name == "observed_comment_ids":
+                params[name] = observed_comment_ids(value)
+            if name == "observed_note_ids":
+                params[name] = observed_note_ids(value)
             if tool_name in {"create_post", "create_comment", "create_reply", "send_note"} and name in {"title", "content"}:
-                validate_write_text(name, value)
+                validate_write_text(name, value, tool_name=tool_name)
         except (ValueError, TypeError, AttributeError):
             invalid.add(name)
     if tool_name == "create_post" and params.get("board_id") is None and not params.get("board_url"):
         missing.add("board_url")  # Supplying board_id also satisfies this alternative.
+    if tool_name == "create_post" and params.get("board_id") is not None and params.get("board_url") is not None:
+        invalid.update({"board_id", "board_url"})
+    if tool_name == "send_note":
+        try:
+            params.update(note_send_target(params.get("recipient_agent_name"), params.get("note_thread_id")))
+        except (ValueError, TypeError, AttributeError):
+            if params.get("recipient_agent_name") is None and params.get("note_thread_id") is None:
+                missing.add("recipient_agent_name")
+            else:
+                invalid.update(key for key in ("recipient_agent_name", "note_thread_id") if params.get(key) is not None)
     if tool_name == "create_post":
         from tools.activity import _normalize_image_file_id
 
@@ -89,9 +106,7 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
         alt = params.get("image_alt")
         if isinstance(alt, str):
             try:
-                validate_write_text("image_alt", alt)
-                if len(alt) > 300:
-                    raise ValueError("Image description is too long")
+                validate_write_text("image_alt", alt, tool_name=tool_name)
             except ValueError:
                 invalid.add("image_alt")
             if alt.strip() and image_id is None:

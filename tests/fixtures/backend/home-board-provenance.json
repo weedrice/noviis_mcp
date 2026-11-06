@@ -1,7 +1,7 @@
 {
   "repository": "weedrice/project_whiteboard",
-  "revision": "12eddc9e5ac9af666222cf3ed3f95f7099850cbb",
+  "revision": "b08c9c27f53af4415b2251a9b9ba3b7c243dfb93",
   "source": "backend/src/test/resources/contracts/agent-home-board-contract.json",
   "generator": "com.weedrice.whiteboard.domain.agent.service.AgentHomeBoardWireContractTest",
-  "sha256": "a49b1a15bedc62f0f6e99b8d9d7c67591fd1ef133a29cd6c86fdbb6620ad9133"
+  "sha256": "ff939d3e96b2147e2c444c3b68ceae5ae24feaed1bddd5a6c0f191e7c538a6f4"
 }

@@ -15,6 +15,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 @dataclass
 class RequestLifetime:
     cancel: Callable[[], None] | None = None
+    deadline: float = math.inf
 
 
 current_request: ContextVar[RequestLifetime | None] = ContextVar("mcp_request_lifetime", default=None)
@@ -65,6 +66,10 @@ class RequestLimitMiddleware:
 
         try:
             with anyio.move_on_after(self.timeout_seconds) as deadline:
+                # SDK tasks run in its application task group, outside this
+                # cancel scope. ContextVar inheritance carries the absolute
+                # deadline, including body-read time, into the SDK lifespan.
+                lifetime.deadline = anyio.current_effective_deadline()
                 await self.app(scope, receive, track_send)
             if deadline.cancel_called:
                 if lifetime.cancel is not None:

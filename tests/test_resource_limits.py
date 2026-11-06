@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from challenge import ChallengeManager
-from exceptions import ChallengeRateLimited, ChallengeUsed
+from exceptions import ChallengeRateLimited, ChallengeUnknown, ChallengeUsed
 from transport import RequestSizeLimitMiddleware
 
 
@@ -40,12 +40,11 @@ class ChallengeCapacityTest(unittest.TestCase):
             self.assertEqual(len(self.manager._challenges), 1)
 
     def test_owner_failure_state_is_globally_bounded(self):
-        from exceptions import ChallengeFailed
         with patch("challenge.CHALLENGE_MAX_RECORDS", 2):
             for owner in ("a", "b"):
-                with self.assertRaises(ChallengeFailed):
+                with self.assertRaises(ChallengeUnknown):
                     self.manager.verify_challenge(owner_key=owner, action="create_post", payload={}, challenge_id="missing", answer="0")
-            with self.assertRaises(ChallengeRateLimited):
+            with self.assertRaises(ChallengeUnknown):
                 self.manager.verify_challenge(owner_key="c", action="create_post", payload={}, challenge_id="missing", answer="0")
             self.assertEqual(len(self.manager._owners), 2)
 
@@ -62,7 +61,7 @@ class ChallengeCapacityTest(unittest.TestCase):
             self.now += 61
             # An unknown-ID attempt must not take the existing owner's slot
             # after its issuance window ends but before its challenge expires.
-            with self.assertRaises(ChallengeRateLimited):
+            with self.assertRaises(ChallengeUnknown):
                 self.manager.verify_challenge(owner_key="another", action="create_post", payload={}, challenge_id="missing", answer="0")
             self.verify(pending)
 

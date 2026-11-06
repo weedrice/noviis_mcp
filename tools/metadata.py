@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
-from tools.parsing import optional_int_from_float as _optional_int
+
+def _optional_int(value: Any) -> int | None:
+    """Ignore malformed advisory headers without losing the primary response."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not re.fullmatch(r"[0-9]{1,19}", value):
+            return None
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= 9_223_372_036_854_775_807:
+        return None
+    return value
 
 
 @dataclass

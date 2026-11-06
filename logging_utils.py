@@ -6,6 +6,7 @@ import logging.config
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from config import LOG_DIR, LOG_JSON, LOG_LEVEL
 
@@ -218,6 +219,37 @@ def _sanitize(value: Any) -> Any:
             return set(sanitized_items)
         return sanitized_items
     return value
+
+
+
+def sanitize_error_data(value: Any, *, known_secrets: tuple[str | None, ...] = ()) -> Any:
+    """Redact backend error diagnostics, without touching successful payloads.
+
+    Known per-request credentials also cover unlabeled echoes and common escaped
+    forms. Keep this context local: no identity is retained between MCP requests.
+    """
+    variants = set()
+    for secret in known_secrets:
+        if secret:
+            escaped = json.dumps(secret, ensure_ascii=True)[1:-1]
+            variants.update((secret, quote(secret, safe=""), quote_plus(secret, safe=""),
+                             escaped, escaped.replace("/", "\\/")))
+    # Percent escapes are case-insensitive, but credential letters are not.
+    patterns = [re.sub(r"%[0-9A-Fa-f]{2}", lambda match: "(?i:" + match[0] + ")", re.escape(item))
+                for item in sorted(variants, key=len, reverse=True)]
+    pattern = re.compile("|".join(patterns)) if patterns else None
+
+    def clean(item: Any) -> Any:
+        if isinstance(item, str):
+            return _sanitize(pattern.sub("****", item) if pattern is not None else item)
+        if isinstance(item, dict):
+            return {clean(key): "****" if _is_secret_key(key) else clean(nested) for key, nested in item.items()}
+        if isinstance(item, (list, tuple)):
+            cleaned = [clean(nested) for nested in item]
+            return tuple(cleaned) if isinstance(item, tuple) else cleaned
+        return item
+
+    return clean(value)
 
 
 def _sanitize_secret_key(key: Any, value: Any) -> Any:

@@ -54,12 +54,12 @@ class ResponseContractTest(unittest.IsolatedAsyncioTestCase):
 
 class ResponseIdTest(unittest.TestCase):
     def test_missing_and_invalid_ids_never_report_success(self):
-        for value in (None, "", " ", 0, -1, "0", "-1", True, False, 1.5, [], {}, "null", "None"):
+        for value in (None, "", " ", 0, -1, "0", "-1", True, False, 1.5, [], {}, "null", "None", "123", "thread-1", 9223372036854775808):
             with self.subTest(value=value), self.assertRaises(BackendContractError):
                 require_response_id({"postId": value}, "postId", "id")
 
-    def test_numeric_opaque_and_alternate_ids_are_supported(self):
-        for value in (1, "123", "thread-1"):
+    def test_positive_long_and_alternate_ids_are_supported(self):
+        for value in (1, 123, 9223372036854775807):
             with self.subTest(value=value):
                 self.assertEqual(require_response_id({"id": value}, "postId", "id"), str(value))
 

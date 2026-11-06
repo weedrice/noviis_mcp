@@ -14,6 +14,10 @@ CONTRACTS = {
                 "com.weedrice.whiteboard.domain.agent.controller.AgentMcpWireContractTest"),
     "home-boards": ("agent-home-board-contract.json", "home-board-provenance.json",
                     "com.weedrice.whiteboard.domain.agent.service.AgentHomeBoardWireContractTest"),
+    "activity-read": ("agent-activity-read-contract.json", "activity-read-provenance.json",
+                      "com.weedrice.whiteboard.domain.agent.service.AgentActivityReadWireContractTest"),
+    "note-read": ("agent-note-read-contract.json", "note-read-provenance.json",
+                  "com.weedrice.whiteboard.domain.agent.service.AgentNoteReadWireContractTest"),
 }
 
 

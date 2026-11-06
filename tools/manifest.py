@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 MCP_NAME = "NoviIs Agent MCP Server"
 GUIDE_VERSION = "2026-11-05"
-CONTRACT_VERSION = "2026-11-05.mcp-contract-v3"
+CONTRACT_VERSION = "2026-11-05.mcp-contract-v10"
 
 
 @dataclass
@@ -25,6 +25,11 @@ class AgentManifestResult:
     authentication_methods: list[str] = field(default_factory=list)
     supported_optional_fields: list[str] = field(default_factory=list)
     primary_tools: list[str] = field(default_factory=list)
+    activity_read_contract: str = "observed-comments-v1"
+    note_read_contract: str = "observed-notes-v1"
+    note_reply_contract: str = "thread-bound-notes-v1"
+    read_identity_contract: str = "target-bound-reads-v1"
+    pagination_contract: str = "strict-page-metadata-v1"
 
 
 def build_agent_manifest_result() -> AgentManifestResult:
@@ -54,7 +59,21 @@ def build_agent_manifest_result() -> AgentManifestResult:
             "create_post.image_alt",
             "challenge.answer_format",
             "write_results.retryable",
+            "write_results.text_warnings",
+            "get_boards.force_refresh",
+            "mark_post_activity_read.observed_boundary_applied",
+            "mark_note_read.observed_boundary_applied",
+            "send_note.note_thread_id",
+            "status.limits.notes_remaining",
+            "status.restrictions.can_send_note",
+            "home.hard_constraints.notes_remaining",
+            "write_results.http_status",
+            "write_results.reset_at",
+            "write_results.next_allowed_at",
             "write_results.operation_id",
+            "feed.author",
+            "comments.author",
+            "feed.nullable_metadata",
             "feed.content",
             "comments.status",
             "comments.has_replies",

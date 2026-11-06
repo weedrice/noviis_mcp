@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from tools.parsing import optional_str as _optional_str, unwrap_dict_data as _unwrap_data
+from tools.status_contract import policy_field, policy_object
 
 
 @dataclass
@@ -42,33 +42,24 @@ def register_rules_tools(mcp: FastMCP) -> None:
 
 
 def build_agent_rules_result(payload: dict[str, Any]) -> AgentRulesResult:
-    data = _unwrap_data(payload)
+    policy_object(payload, "rules response")
+    data = policy_object(payload.get("data", payload), "rules")
     return AgentRulesResult(
-        title=str(data.get("title", "")),
-        version=str(data.get("version", "")),
-        hard_constraints=_to_rule_items(
-            data.get("hard_constraints", data.get("hardConstraints"))
-        ),
-        soft_guidance=_to_rule_items(
-            data.get("soft_guidance", data.get("softGuidance"))
-        ),
-        style_guidance=_to_rule_items(
-            data.get("style_guidance", data.get("styleGuidance"))
-        ),
+        title=policy_field(data, "title", str, label="rules", required=False, nullable=True) or "",
+        version=policy_field(data, "version", str, label="rules", required=False, nullable=True) or "",
+        hard_constraints=_to_rule_items(policy_field(data, "hard_constraints", list, label="rules", required=False)),
+        soft_guidance=_to_rule_items(policy_field(data, "soft_guidance", list, label="rules", required=False)),
+        style_guidance=_to_rule_items(policy_field(data, "style_guidance", list, label="rules", required=False)),
     )
 
 
-def _to_rule_items(value: Any) -> list[RuleItem]:
-    if not isinstance(value, list):
-        return []
+def _to_rule_items(value: list[Any] | None) -> list[RuleItem]:
     items = []
-    for item in value:
-        if isinstance(item, dict):
-            items.append(
-                RuleItem(
-                    code=str(item.get("code", "")),
-                    description=str(item.get("description", "")),
-                    severity=_optional_str(item.get("severity")),
-                )
-            )
+    for raw_item in value or []:
+        item = policy_object(raw_item, "rule")
+        items.append(RuleItem(
+            code=policy_field(item, "code", str, label="rule"),
+            description=policy_field(item, "description", str, label="rule"),
+            severity=policy_field(item, "severity", str, label="rule", required=False, nullable=True),
+        ))
     return items

@@ -44,7 +44,7 @@ class OperationFlowTest(unittest.IsolatedAsyncioTestCase):
         for name, (extra, response) in cases.items():
             with self.subTest(name=name):
                 function = self.registry.functions[name]
-                args = dict(ctx=self.ctx, agent_token="owner", content="sample", **extra)
+                args = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, **extra)
                 getattr(self.client, name).return_value = {"data": response}
                 issued = await function(**args)
                 self.assertEqual(issued.operation_id, issued.challenge.challenge_id)
@@ -56,7 +56,7 @@ class OperationFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unknown_outcome_lookup_and_fresh_challenge_preserve_original_key(self):
         function = self.registry.functions["create_comment"]
-        args = dict(ctx=self.ctx, agent_token="owner", content="sample", post_id="1")
+        args = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, post_id="1")
         issued = await function(**args)
         self.client.create_comment.side_effect = ServerError("connection lost")
         with self.assertRaises(ServerError):
@@ -78,7 +78,7 @@ class OperationFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_changed_operation_id_cannot_reuse_challenge(self):
         function = self.registry.functions["create_comment"]
-        args = dict(ctx=self.ctx, agent_token="owner", content="sample", post_id="1", operation_id=str(uuid4()))
+        args = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, post_id="1", operation_id=str(uuid4()))
         issued = await function(**args)
         args["operation_id"] = str(uuid4())
         result = await function(**args, challenge_id=issued.challenge.challenge_id, answer="2.00")
@@ -87,7 +87,7 @@ class OperationFlowTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_and_invalid_ids_fail_before_any_side_effect(self):
         function = self.registry.functions["create_comment"]
-        args = dict(ctx=self.ctx, agent_token="owner", content="sample", post_id="1")
+        args = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, post_id="1")
         with self.assertRaises(ValueError):
             await function(**args, operation_id="bad-id")
         with patch("tools.operations.NOVIIS_OPERATION_SUPPORT", False), self.assertRaises(ValueError):
@@ -119,10 +119,10 @@ class OperationWireTest(unittest.IsolatedAsyncioTestCase):
         key = str(uuid4())
         async with httpx.AsyncClient(base_url="https://noviis.test", transport=httpx.MockTransport(handler)) as http:
             client = NoviIsClient(client=http, internal_secret="test-secret")
-            await client.create_post(token="owner", title="sample", content="sample", board_url="normal", operation_id=key)
-            await client.create_comment(token="owner", post_id="1", content="sample", operation_id=key)
-            await client.create_reply(token="owner", comment_id="1", content="sample", operation_id=key)
-            await client.send_note(token="owner", recipient_agent_name="recipient", content="sample", operation_id=key)
+            await client.create_post(token="owner", title="sample", content="sample" * 10, board_url="normal", operation_id=key)
+            await client.create_comment(token="owner", post_id="1", content="sample" * 10, operation_id=key)
+            await client.create_reply(token="owner", comment_id="1", content="sample" * 10, operation_id=key)
+            await client.send_note(token="owner", recipient_agent_name="recipient", content="sample" * 10, operation_id=key)
             await client.get_operation_result(token="owner", operation_id=key)
         self.assertEqual(len(requests), 5)
         for request in requests[:4]:

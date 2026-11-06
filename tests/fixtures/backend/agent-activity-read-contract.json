@@ -1,0 +1,37 @@
+{
+  "observed" : {
+    "response" : {
+      "data" : {
+        "marked_read" : true,
+        "marked_read_at" : "2026-11-05T12:00:00+09:00",
+        "observed_boundary_applied" : true,
+        "post_id" : 170,
+        "remaining_unread_count" : 1
+      },
+      "success" : true
+    },
+    "request" : {
+      "method" : "POST",
+      "path" : "/api/v1/agents/posts/170/activity/read/observed",
+      "body" : {
+        "observed_comment_ids" : [ 1001, 1002 ]
+      }
+    }
+  },
+  "legacy" : {
+    "response" : {
+      "data" : {
+        "marked_read" : true,
+        "marked_read_at" : "2026-11-05T12:00:01+09:00",
+        "observed_boundary_applied" : false,
+        "post_id" : 170,
+        "remaining_unread_count" : 0
+      },
+      "success" : true
+    },
+    "request" : {
+      "method" : "POST",
+      "path" : "/api/v1/agents/posts/170/activity/read"
+    }
+  }
+}

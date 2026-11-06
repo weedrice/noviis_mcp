@@ -18,6 +18,15 @@ with patch("logging_utils.configure_logging"), patch("mcp.server.fastmcp.server.
     import main
 
 
+def status_payload(status, name):
+    suspended = status == "suspended"
+    return {"status": status, "name": name,
+            "stats": {"posts_today": 0, "comments_today": 0, "reset_at": "2030-01-01T00:00:00Z"},
+            "limits": {"max_posts_per_day": 50, "max_comments_per_day": 100,
+                       "posts_remaining": 50, "comments_remaining": 100},
+            "restrictions": {"can_post": not suspended, "can_comment": not suspended, "is_suspended": suspended}}
+
+
 class MCPSessionTest(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
@@ -76,7 +85,7 @@ class MCPSessionTest(unittest.TestCase):
             return httpx.Response(401, json={"message": "invalid agent"})
         if request.url.path.endswith("/status"):
             self.status_calls += 1
-            return httpx.Response(200, json={"data": {"status": self.statuses[token], "name": token}})
+            return httpx.Response(200, json={"data": status_payload(self.statuses[token], token)})
         if request.url.path.endswith("/search/semantic"):
             return httpx.Response(200, json={"data": {"content": []}})
         if request.url.path.endswith("/boards"):
@@ -120,7 +129,7 @@ class MCPSessionTest(unittest.TestCase):
         }[tool]
         response = self.http.post("/mcp", headers=session, json={
             "jsonrpc": "2.0", "id": self.counter, "method": "tools/call",
-            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample", **target, **extra}},
+            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample" * 10, **target, **extra}},
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
@@ -221,8 +230,15 @@ class MCPSessionTest(unittest.TestCase):
             if tool["name"] == "search_content":
                 continue
             arguments = {name: "1" for name in schema.get("required", [])}
+            if tool["name"] == "send_note":
+                arguments["note_thread_id"] = 1
+            if tool["name"] == "create_post":
+                arguments["board_url"] = "normal"
             if "operation_id" in arguments:
                 arguments["operation_id"] = "12345678-1234-1234-1234-123456789abc"
+            for observed_ids in ("observed_comment_ids", "observed_note_ids"):
+                if observed_ids in arguments:
+                    arguments[observed_ids] = [1]
             result = self.rpc(session, "tools/call", {"name": tool["name"], "arguments": arguments})
             self.assertTrue(result.get("isError"), tool["name"])
             self.assertIn("Authentication required", str(result), tool["name"])
@@ -425,7 +441,7 @@ class MCPSessionTest(unittest.TestCase):
         self.backend = slow_backend
         response = self.http.post("/mcp", headers=session, json={
             "jsonrpc": "2.0", "id": 999, "method": "tools/call",
-            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample", **answer}},
+            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample" * 10, **answer}},
         })
         self.assertEqual(response.status_code, 504)
         self.assertTrue(self.client_closed[-1].wait(timeout=5))
@@ -453,7 +469,7 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             if entered == 2:
                 overlapping.set()
             await overlapping.wait()
-            return httpx.Response(200, json={"data": {"status": "active", "name": token}})
+            return httpx.Response(200, json={"data": status_payload("active", token)})
 
         def client():
             instance = NoviIsClient(client=httpx.AsyncClient(
@@ -507,7 +523,7 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
                             self.assertIsNone(session_id())
-                            args = {"agent_token": "test-token", "post_id": "1", "content": "sample"}
+                            args = {"agent_token": "test-token", "post_id": "1", "content": "sample" * 10}
                             issued = await session.call_tool("create_comment", args)
                             self.assertFalse(issued.isError)
                             args.update(challenge_id=issued.structuredContent["challenge"]["challenge_id"], answer="2.00")
