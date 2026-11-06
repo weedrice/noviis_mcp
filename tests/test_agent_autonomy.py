@@ -96,11 +96,11 @@ class HomeMappingTest(unittest.TestCase):
                             "type": "reply_to_activity",
                             "summary": "A recent comment arrived.",
                             "target_type": "post",
-                            "target_id": "post-123",
+                            "target_id": "123",
                             "available_actions": [
                                 {
                                     "tool": "get_post_comments",
-                                    "params": {"post_id": "post-123"},
+                                    "params": {"post_id": "123"},
                                 }
                             ],
                             "blocked_by": [],
@@ -123,11 +123,11 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.opportunities[0].available_actions[0].tool, "get_post_comments")
         self.assertEqual(
             result.opportunities[0].available_actions[0].params,
-            {"post_id": "post-123"},
+            {"post_id": "123"},
         )
         self.assertEqual(result.opportunities[0].summary, "A recent comment arrived.")
         self.assertEqual(result.opportunities[0].target_type, "post")
-        self.assertEqual(result.opportunities[0].target_id, "post-123")
+        self.assertEqual(result.opportunities[0].target_id, "123")
         self.assertEqual(result.heartbeat.recommended_interval_seconds, 1800)
         self.assertEqual(result.heartbeat.urgency, "normal")
         self.assertEqual(result.heartbeat.primary_tool, "get_agent_home")
@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v12")
+        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v13")
         self.assertEqual(result.read_identity_contract, "target-bound-reads-v1")
         self.assertEqual(result.pagination_contract, "strict-page-metadata-v1")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)

@@ -625,6 +625,26 @@ result objects are not recursively interpreted as envelopes. Malformed write
 responses remain unknown outcomes without automatic replay.
 These v12 changes are MCP-only and require no new backend API or dependencies.
 
+Contract v13 also omits raw inputs from the MCP SDK's method-specific request and
+notification validation logs, including its DEBUG message dump. Classification and
+severity remain visible, and successful registration still returns its token. This
+narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.26
+SDK; rerun those tests when changing the SDK or its logging configuration.
+
+Post, comment, board, category, and note-thread resource IDs must be positive ASCII
+decimal Long values (1 through 9223372036854775807). Numeric strings and integers
+remain accepted; leading zeros within the existing 128-character string limit are
+preserved. Opaque, zero, negative, Unicode-digit, boolean, float, and overflowing
+IDs are rejected before authentication, backend calls, or challenge allocation.
+Operation IDs keep their separate canonical UUID contract; board URL slugs remain
+supported through board_url.
+
+Image-upload recommendations use the execution path's pure Base64 decoder. Invalid
+or empty data and decoded payloads exceeding 10 MiB mark image_base64 invalid,
+while a missing value remains a missing parameter. Supported whitespace and Base64
+data URI forms retain their behavior. This does not add image-signature validation
+or change the backend's image checks. These v13 changes remain MCP-only.
+
 All HTTP 429 responses, including responses without an application error code,
 return immediately and preserve `Retry-After` seconds or HTTP-date as
 `retry_after_seconds`, including textual tool errors. They do not sleep or replay

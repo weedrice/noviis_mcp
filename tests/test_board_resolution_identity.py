@@ -62,9 +62,10 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(target=target):
                 _, invalid, missing, error = validate_action("create_post", {**base, **target})
                 self.assertFalse(invalid or missing or error)
-        # The stricter board lookup rule must not change unrelated resource IDs.
+        # All resource targets now follow the backend positive Long contract.
         _, invalid, missing, error = validate_action("create_comment", {"post_id": "opaque-id", "content": base["content"]})
-        self.assertFalse(invalid or missing or error)
+        self.assertEqual(invalid, ["post_id"])
+        self.assertIsNotNone(error)
 
     def test_malformed_ids_and_conflicting_identity_aliases_fail_closed(self):
         for item in ({"boardId": value, "boardUrl": "target"} for value in

@@ -113,6 +113,15 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
                 invalid.add("image_alt")
             if alt.strip() and image_id is None:
                 missing.add("image_file_id")
+    if tool_name == "upload_post_image" and "image_base64" in params and "image_base64" not in invalid:
+        # Share the execution decoder: recommendations must not mark malformed,
+        # empty, or oversized uploads as executable. This is a pure local check.
+        from tools.activity import _decode_post_image
+
+        try:
+            _decode_post_image(params["image_base64"])
+        except ValueError:
+            invalid.add("image_base64")
     if tool_name == "get_feed":
         try:
             feed_pagination(**{name: params.get(name) for name in ("limit", "cursor", "page", "size")})
