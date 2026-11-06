@@ -4,10 +4,16 @@ from collections import deque
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
+import json
 import math
 import time
 
 import anyio
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
+from mcp.types import INVALID_PARAMS, JSONRPCMessage
+from pydantic import ValidationError
+from starlette._utils import get_route_path
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -93,9 +99,12 @@ class RequestLimitMiddleware:
 class RequestSizeLimitMiddleware:
     """Bound HTTP bodies before MCP parses JSON, including chunked requests."""
 
-    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, max_body_bytes: int, *, rpc_path: str | None = None,
+                 transport_security: TransportSecuritySettings | None = None) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.rpc_path = rpc_path
+        self.rpc_security = TransportSecurityMiddleware(transport_security)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in {"POST", "PUT", "PATCH"}:
@@ -126,6 +135,9 @@ class RequestSizeLimitMiddleware:
             if not message.get("more_body", False):
                 break
 
+        if await self._reject_invalid_rpc_envelope(scope, body, receive, send):
+            return
+
         replayed = False
 
         async def replay() -> Message:
@@ -136,6 +148,47 @@ class RequestSizeLimitMiddleware:
             return await receive()
 
         await self.app(scope, replay, send)
+
+    async def _reject_invalid_rpc_envelope(
+        self, scope: Scope, body: bytearray, receive: Receive, send: Send,
+    ) -> bool:
+        # Match the router's handling of mounted apps and ASGI root_path.
+        if scope["method"] != "POST" or self.rpc_path is None or get_route_path(scope) != self.rpc_path:
+            return False
+        try:
+            raw_message = json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            # Keep the SDK's existing JSON syntax/encoding error behavior.
+            return False
+        try:
+            JSONRPCMessage.model_validate(raw_message)
+        except ValidationError:
+            pass
+        else:
+            return False
+
+        # The SDK checks security and media headers before validating its body.
+        # Reuse its security policy so malformed envelopes do not mask those
+        # responses; this adapter applies to our JSON-response endpoint only.
+        request = Request(scope)
+        security_error = await self.rpc_security.validate_request(request, is_post=True)
+        if security_error is not None:
+            await security_error(scope, receive, send)
+            return True
+        accept_types = (part.strip() for part in request.headers.get("accept", "").split(","))
+        if not any(part.startswith("application/json") for part in accept_types):
+            return False
+        content_types = (part.strip() for part in request.headers.get("content-type", "").split(";")[0].split(","))
+        if "application/json" not in content_types:
+            return False
+
+        # Never stringify the exception: union validation errors can embed
+        # credentials anywhere in the input, including nested params.
+        await JSONResponse({
+            "jsonrpc": "2.0", "id": "server-error",
+            "error": {"code": INVALID_PARAMS, "message": "Invalid JSON-RPC message."},
+        }, status_code=400)(scope, receive, send)
+        return True
 
     async def _too_large(self, scope: Scope, receive: Receive, send: Send) -> None:
         await JSONResponse({"error": "request_too_large"}, status_code=413)(scope, receive, send)

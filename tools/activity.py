@@ -21,6 +21,7 @@ from exceptions import BackendContractError, NoviIsAPIError
 from tools.constraint_contract import validate_hard_constraints
 from tools.challenge_flow import (
     authenticate_write,
+    check_replay_result,
     issue_challenge_result,
     require_challenge_pair,
     verify_or_reissue_challenge,
@@ -30,7 +31,6 @@ from tools.parsing import (
     dict_payload as _dict_payload,
     post_content, post_preview,
     extract_name as _extract_name,
-    optional_bool as _optional_bool,
     optional_int as _optional_int,
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
@@ -41,6 +41,7 @@ from tools.response_contract import (require_response_id, require_bool, require_
 from tools.content_safety import content_warnings
 from tools.pagination import read_pagination
 from tools.read_metadata import ReadAuthor, read_author, read_post_metadata
+from tools.comment_metadata import read_comment_metadata
 
 
 @dataclass
@@ -551,9 +552,21 @@ def register_activity_tools(mcp: FastMCP) -> None:
         }
 
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             preflight_result = await _preflight_create_post(runtime, agent_token)
             if preflight_result is not None:
+                replay_result = check_replay_result(
+                    runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                    challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+                )
+                if replay_result is not None:
+                    return replay_result
                 preflight_result.operation_id = request_payload["operation_id"]
                 preflight_result.text_warnings = write_text_warnings(title, content, image_alt)
                 return preflight_result
@@ -561,6 +574,12 @@ def register_activity_tools(mcp: FastMCP) -> None:
             # Resolve fallible prerequisites before consuming the single-use challenge.
             resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
         except NoviIsAPIError as exc:
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+            )
+            if replay_result is not None:
+                return replay_result
             return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         # Bind the actual wire target, not just the user's ID or an empty slug.
         request_payload["resolved_board_url"] = resolved_board_url
@@ -643,9 +662,21 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             await authenticate_write(runtime, agent_token)
         except NoviIsAPIError as exc:
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+            )
+            if replay_result is not None:
+                return replay_result
             return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
@@ -718,9 +749,21 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             await authenticate_write(runtime, agent_token)
         except NoviIsAPIError as exc:
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+            )
+            if replay_result is not None:
+                return replay_result
             return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(
@@ -866,15 +909,15 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
     raw_replies = item.get("children", item.get("replies", []))
     if not isinstance(raw_replies, list):
         raw_replies = []
-    legacy_deleted = bool(_optional_bool(item.get("isDeleted", item.get("is_deleted")), False))
-    status = str(item.get("status") or ("DELETED" if legacy_deleted else "ACTIVE")).upper()
+    metadata = read_comment_metadata(item, nested_reply_count=len(raw_replies))
+    status = metadata["status"]
     content = str(item.get("content", item.get("body", ""))) if status == "ACTIVE" else ""
-    reply_count = int(item.get("replyCount", item.get("reply_count", len(raw_replies))))
     parent_id = require_positive_long_id(item, "parentId", "parent_comment_id", "parentCommentId", "parent_id", nullable=True)
     comment_id = require_response_id(item, "commentId", "comment_id", "id")
     if parent_id is not None and str(parent_id) == comment_id:
         raise BackendContractError("Comment cannot be its own parent.")
     return Comment(
+        **metadata,
         author=read_author(item.get("author")),
         comment_id=comment_id,
         post_id=require_response_id(item, "postId", "post_id"),
@@ -882,12 +925,6 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
         content=content,
         created_at=str(item.get("createdAt", item.get("created_at", ""))),
         author_name=_extract_name(item.get("author")),
-        depth=int(item.get("depth", 0)),
-        reply_count=reply_count,
-        has_replies=bool(_optional_bool(item.get("hasReplies", item.get("has_replies")), reply_count > 0)),
-        status=status,
-        like_count=int(item.get("likeCount", item.get("like_count", 0))),
-        is_deleted=status == "DELETED",
         board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
         post_title=_optional_str(item.get("postTitle", item.get("post_title"))),
         replies=replies or [],

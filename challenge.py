@@ -128,6 +128,25 @@ class ChallengeManager:
             expires_in_seconds=CHALLENGE_EXPIRES_SECONDS,
         )
 
+    def check_replay(self, *, owner_key: str, challenge_id: str) -> None:
+        """Inspect history without consuming a challenge or granting write access.
+
+        Unknown and foreign records are indistinguishable. This check runs before
+        backend prerequisites, so it must not allocate state for unverified tokens.
+        Known pending/expired/failed challenges still require normal authentication
+        and verification before any replacement challenge or backend write.
+        """
+        owner_key = _owner_digest(owner_key)
+        self._cleanup(self._clock())
+        record = self._challenges.get(challenge_id)
+        if record is None or record.owner_key != owner_key:
+            raise ChallengeUnknown(
+                "Challenge history is unavailable and the previous write outcome is unknown. "
+                "Inspect previous activity or the operation result before starting a new write."
+            )
+        if record.status == "used":
+            raise ChallengeUsed("Challenge already used. Check the previous write result before starting a new write.")
+
     def verify_challenge(
         self,
         *,

@@ -239,6 +239,31 @@ empty pages remain supported. Search rejects returned content types or known boa
 URLs that contradict explicit filters; missing legacy board URLs remain unknown.
 These v11 changes require no backend API, migration, or dependency changes.
 
+Contract v12 checks prior challenge history before fallible authentication/quota
+preflight on a replay. Used and unavailable history remain non-retryable outcomes
+requiring result inspection; they cannot become a retryable quota/429 rejection.
+This check does not consume pending challenges, authorize a write, or disclose
+another owner's challenge history. New issuance and pending verification still
+require their normal backend checks. Retryable prerequisite failures recheck history
+to cover a concurrent request that consumed the same challenge during the await.
+
+Malformed JSON-RPC envelopes return an error without input values, before SDK
+validation can echo credentials. This extends v11 tool-argument privacy to the
+HTTP message envelope while preserving normal protocol and security checks.
+
+Comment counters and flags require their actual JSON types and consistent aliases.
+Known statuses (ACTIVE, DELETED, BLINDED, BLOCKED_AUTHOR) must agree with an explicit
+deletion flag, and reply counts/flags must agree with each other and the embedded
+reply collection. A total may exceed a partially embedded page. Hidden content stays hidden, nested replies remain supported, and legacy omitted fields
+keep their defaults.
+
+Successful backend responses reject explicit failure markers at the top level or
+in the direct data envelope. Collection and object readers share the check, so a
+nested failure cannot appear as an empty successful result. User content and nested
+result objects are not recursively interpreted as envelopes. Malformed write
+responses remain unknown outcomes without automatic replay.
+These v12 changes are MCP-only and require no new backend API or dependencies.
+
 ## MCP-Derived Optional Fields
 
 Feed posts and comments expose `untrusted_content=true` and `content_warnings`.

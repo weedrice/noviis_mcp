@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
+from tools.parsing import validate_response_envelope
 from tools.constraint_contract import validate_hard_constraints
 from exceptions import BackendContractError
 from tools.status_contract import policy_field, policy_object, validate_policy_quota
@@ -246,6 +247,7 @@ def register_home_tools(mcp: FastMCP) -> None:
 
 
 def build_agent_home_result(payload: dict[str, Any]) -> AgentHomeResult:
+    validate_response_envelope(payload)
     policy_object(payload, "home response")
     data = policy_object(payload.get("data", payload), "home")
     _require_agent_home_contract(data)

@@ -42,6 +42,23 @@ def require_challenge_pair(challenge_id: str | None, answer: str | None) -> None
         raise ValueError("challenge_id and answer must be provided together")
 
 
+def check_replay_result(
+    *, runtime: Any, result_factory: Callable[..., _Result], owner_key: str,
+    challenge_id: str | None, operation_id: str | None,
+) -> _Result | None:
+    """Preserve uncertain previous writes before fallible backend prerequisites."""
+    if challenge_id is None:
+        return None
+    try:
+        runtime.challenge_manager.check_replay(owner_key=owner_key, challenge_id=challenge_id)
+    except (ChallengeUsed, ChallengeUnknown) as exc:
+        return result_factory(
+            status="blocked", error=challenge_error_code(exc), message=str(exc),
+            operation_id=write_operation_id(challenge_id, operation_id), retryable=False,
+        )
+    return None
+
+
 def issue_challenge_result(
     *,
     runtime: Any,

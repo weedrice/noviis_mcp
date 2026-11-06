@@ -15,6 +15,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from exceptions import BackendContractError, NoviIsAPIError
 from tools.challenge_flow import (
     authenticate_write,
+    check_replay_result,
     issue_challenge_result,
     require_challenge_pair,
     verify_or_reissue_challenge,
@@ -190,9 +191,21 @@ def register_note_tools(mcp: FastMCP) -> None:
             "content": content,
         }
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             await authenticate_write(runtime, agent_token)
         except NoviIsAPIError as exc:
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=request_payload["operation_id"],
+            )
+            if replay_result is not None:
+                return replay_result
             return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
         if challenge_id is None:
             return issue_challenge_result(

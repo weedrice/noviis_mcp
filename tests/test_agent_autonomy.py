@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v11")
+        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v12")
         self.assertEqual(result.read_identity_contract, "target-bound-reads-v1")
         self.assertEqual(result.pagination_contract, "strict-page-metadata-v1")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)

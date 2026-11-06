@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
+from tools.parsing import validate_response_envelope
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,6 +43,7 @@ def register_rules_tools(mcp: FastMCP) -> None:
 
 
 def build_agent_rules_result(payload: dict[str, Any]) -> AgentRulesResult:
+    validate_response_envelope(payload)
     policy_object(payload, "rules response")
     data = policy_object(payload.get("data", payload), "rules")
     return AgentRulesResult(
