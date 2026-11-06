@@ -48,12 +48,31 @@ ROTATING_FILE_HANDLER = {
     "backupCount": 5,
     "encoding": "utf-8",
 }
+SDK_VALIDATION_MESSAGES = {
+    "Failed to validate request:": "Failed to validate request: input omitted.",
+    "Failed to validate notification:": "Failed to validate notification: input omitted.",
+    "Message that failed validation:": "Message that failed validation: input omitted.",
+}
 
 
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # Render first: redacting a format string can remove its % placeholders.
         message = record.getMessage()
+        # MCP SDK 1.26 logs method-specific validation errors and raw messages
+        # before Tool.run. These root-logger diagnostics may contain arbitrary
+        # unlabeled secrets, so token-pattern masking is insufficient. Keep the
+        # classification and severity, but never retain their input diagnostics.
+        # Actual HTTP tests cover this narrow SDK source/message adapter.
+        if (record.pathname.replace("\\", "/").lower().endswith("/mcp/shared/session.py")
+                and record.funcName == "_receive_loop"):
+            for prefix, safe_message in SDK_VALIDATION_MESSAGES.items():
+                if message.startswith(prefix):
+                    message = safe_message
+                    record.exc_info = None
+                    record.exc_text = None
+                    record.stack_info = None
+                    break
         if isinstance(record.args, dict):
             for key, value in record.args.items():
                 if _is_secret_key(key) and str(value):

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target
 from tools.write_safety import validate_write_text
+from tools.annotations import hide_tool_validation_inputs
 
 
 @lru_cache(maxsize=1)
@@ -25,6 +26,7 @@ def tool_contracts() -> dict[str, Tool]:
         def tool(self, **kwargs):
             def register(fn):
                 definition = Tool.from_function(fn, **kwargs)
+                hide_tool_validation_inputs(definition)
                 self.definitions[definition.name] = definition
                 return fn
             return register
@@ -111,6 +113,15 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
                 invalid.add("image_alt")
             if alt.strip() and image_id is None:
                 missing.add("image_file_id")
+    if tool_name == "upload_post_image" and "image_base64" in params and "image_base64" not in invalid:
+        # Share the execution decoder: recommendations must not mark malformed,
+        # empty, or oversized uploads as executable. This is a pure local check.
+        from tools.activity import _decode_post_image
+
+        try:
+            _decode_post_image(params["image_base64"])
+        except ValueError:
+            invalid.add("image_base64")
     if tool_name == "get_feed":
         try:
             feed_pagination(**{name: params.get(name) for name in ("limit", "cursor", "page", "size")})

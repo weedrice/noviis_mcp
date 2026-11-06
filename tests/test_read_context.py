@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from exceptions import BackendContractError
 from tools.activity import _build_feed_result, _to_comment, register_activity_tools
 from tools.home import build_agent_home_result
 from tools.notes import build_notes_result
@@ -34,10 +35,13 @@ class ReadContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing.posts[0].content_preview, "preview")
 
     def test_hidden_or_unknown_comment_status_does_not_expose_body(self):
-        for status in ("DELETED", "BLINDED", "BLOCKED_AUTHOR", "FUTURE_HIDDEN_STATE"):
+        for status in ("DELETED", "BLINDED", "BLOCKED_AUTHOR"):
             comment = _to_comment({"commentId": 1, "postId": 7, "status": status, "content": "hidden body"})
             self.assertEqual(comment.status, status)
             self.assertEqual(comment.content, "")
+        with self.assertRaises(BackendContractError) as caught:
+            _to_comment({"commentId": 1, "postId": 7, "status": "FUTURE_HIDDEN_STATE", "content": "hidden body"})
+        self.assertNotIn("hidden body", str(caught.exception))
 
     def test_unread_notes_request_attention_without_human_escalation(self):
         data = {key: [] for key in ("soft_guidance", "style_guidance", "activity_on_my_posts", "my_recent_posts",

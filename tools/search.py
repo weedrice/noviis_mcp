@@ -86,20 +86,31 @@ def register_search_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return build_semantic_search_result(payload, requested_page=page, requested_size=size)
+        return build_semantic_search_result(
+            payload, requested_page=page, requested_size=size,
+            requested_content_type=content_type.upper(), requested_board_url=board_url,
+        )
 
 
 def build_semantic_search_result(
     payload: dict[str, Any], *, requested_page: int | None = None, requested_size: int | None = None,
+    requested_content_type: str = "ALL", requested_board_url: str | None = None,
 ) -> SemanticSearchResult:
     data, raw_content = read_collection(payload, "content")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_content))
     has_previous = policy_field(data, "has_previous", bool, label="search", required=False)
     page = pagination["page"] if pagination["page"] is not None else requested_page
     if has_previous is not None and page is not None and has_previous != (page > 0):
         raise BackendContractError("Search has_previous disagrees with the page number.")
+    content = [_to_search_item(item) for item in raw_content]
+    for item in content:
+        if requested_content_type != "ALL" and item.content_type != requested_content_type:
+            raise BackendContractError("Search result does not match the requested content type.")
+        # Legacy optional omissions remain unknown, not invented identifiers.
+        if requested_board_url is not None and item.board_url is not None and item.board_url != requested_board_url:
+            raise BackendContractError("Search result does not match the requested board URL.")
     return SemanticSearchResult(
-        content=[_to_search_item(item) for item in raw_content],
+        content=content,
         page=pagination["page"],
         size=pagination["size"],
         total_elements=pagination["total_elements"],

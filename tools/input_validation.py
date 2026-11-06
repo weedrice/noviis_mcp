@@ -69,22 +69,26 @@ def operation_id(value: str) -> str:
 
 
 def resource_id(value: str | int) -> str:
-    if type(value) not in (str, int):
-        raise ValueError("Resource ID must be a string or integer.")
-    result = str(value)
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", result) or result == "0" or result.startswith("-"):
-        raise ValueError("Resource ID must be one valid ASCII ID segment of at most 128 characters.")
-    return result
+    """Accept backend Long identities while preserving legacy leading zeros."""
+    maximum = 9_223_372_036_854_775_807
+    if type(value) is int:
+        # Check before str(): an untrusted integer may have thousands of digits.
+        if not 0 < value <= maximum:
+            raise ValueError("Resource ID must be a positive decimal Long.")
+        return str(value)
+    if type(value) is not str or not 1 <= len(value) <= 128 or not value.isascii() or not value.isdecimal():
+        raise ValueError("Resource ID must be a positive ASCII decimal Long of at most 128 characters.")
+    normalized = value.lstrip("0")
+    if not normalized or len(normalized) > 19 or int(normalized) > maximum:
+        raise ValueError("Resource ID must be a positive decimal Long.")
+    return value
 
 
 def board_lookup_id(value: str | int) -> int:
-    text = resource_id(value)
-    if not text.isascii() or not text.isdecimal():
-        raise ValueError("board_id must be a positive decimal Long; use board_url for a slug.")
-    normalized = text.lstrip("0")
-    if not normalized or len(normalized) > 19 or int(normalized) > 9_223_372_036_854_775_807:
-        raise ValueError("board_id must be a positive decimal Long.")
-    return int(normalized)
+    try:
+        return int(resource_id(value))
+    except ValueError:
+        raise ValueError("board_id must be a positive decimal Long; use board_url for a slug.") from None
 
 
 def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int | None) -> dict[str, Any]:
@@ -124,7 +128,7 @@ def validate_registration_description(value: Any) -> None:
 
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
-    for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id", "operation_id"):
+    for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id"):
         if values.get(key) is not None:
             resource_id(values[key])
     if tool_name == "create_post" and values.get("board_id") is not None:

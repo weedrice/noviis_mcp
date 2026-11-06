@@ -35,6 +35,7 @@ class ChallengeOperationContextTest(unittest.TestCase):
         for error in (limited(), ChallengeSuspended(30)):
             manager = Mock()
             manager.verify_challenge.side_effect = error
+            manager.recovery_operation_id.return_value = operation
             with patch("tools.operations.NOVIIS_OPERATION_SUPPORT", True):
                 result = verify_or_reissue_challenge(
                     runtime=SimpleNamespace(challenge_manager=manager), result_factory=CreateCommentResult,
@@ -48,6 +49,7 @@ class ChallengeOperationContextTest(unittest.TestCase):
         operation = str(uuid4())
         manager = Mock()
         manager.verify_challenge.side_effect = ChallengeExpired("expired")
+        manager.recovery_operation_id.return_value = operation
         manager.issue_challenge.side_effect = limited()
         with patch("tools.operations.NOVIIS_OPERATION_SUPPORT", True):
             result = verify_or_reissue_challenge(

@@ -32,7 +32,7 @@ from exceptions import (
     ServerError,
     Unauthorized,
 )
-from tools.parsing import compact_params as _compact_params, optional_str as _optional_str
+from tools.parsing import compact_params as _compact_params, optional_str as _optional_str, validate_response_envelope
 
 
 from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination, observed_comment_ids as _observed_ids
@@ -148,8 +148,7 @@ class NoviIsClient:
                         "token": mask_token(token),
                     },
                 )
-                if payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
-                    raise BackendContractError("Backend reported an error in a successful HTTP response.")
+                validate_response_envelope(payload)
                 payload.pop("_http_no_content", None)
                 if response.status_code == 204 and method.upper() == "DELETE":
                     payload["_http_no_content"] = True

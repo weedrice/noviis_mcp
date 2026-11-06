@@ -17,7 +17,7 @@ from exceptions import (
     PermissionDenied,
 )
 from tools.parsing import unwrap_dict_data
-from tools.operations import write_operation_id
+from tools.operations import retained_operation_id, write_operation_id
 
 
 _Result = TypeVar("_Result")
@@ -42,6 +42,41 @@ def require_challenge_pair(challenge_id: str | None, answer: str | None) -> None
         raise ValueError("challenge_id and answer must be provided together")
 
 
+def recovery_response_operation_id(
+    *, runtime: Any, owner_key: str, challenge_id: str | None, operation_id: str | None,
+) -> str | None:
+    """Use owner-bound metadata for responses without altering verification input."""
+    if challenge_id is not None:
+        try:
+            return retained_operation_id(runtime.challenge_manager.recovery_operation_id(
+                owner_key=owner_key, challenge_id=challenge_id,
+            ))
+        except ChallengeUnknown:
+            pass
+    return retained_operation_id(operation_id)
+
+
+def check_replay_result(
+    *, runtime: Any, result_factory: Callable[..., _Result], owner_key: str,
+    challenge_id: str | None, operation_id: str | None,
+) -> _Result | None:
+    """Preserve uncertain previous writes before fallible backend prerequisites."""
+    if challenge_id is None:
+        return None
+    try:
+        original_operation_id = runtime.challenge_manager.recovery_operation_id(
+            owner_key=owner_key, challenge_id=challenge_id,
+        )
+        runtime.challenge_manager.check_replay(owner_key=owner_key, challenge_id=challenge_id)
+    except (ChallengeUsed, ChallengeUnknown) as exc:
+        recovery_key = original_operation_id if isinstance(exc, ChallengeUsed) else operation_id
+        return result_factory(
+            status="blocked", error=challenge_error_code(exc), message=str(exc),
+            operation_id=retained_operation_id(recovery_key), retryable=False,
+        )
+    return None
+
+
 def issue_challenge_result(
     *,
     runtime: Any,
@@ -55,8 +90,7 @@ def issue_challenge_result(
     challenge_id = str(uuid4())
     payload = dict(payload)
     original_operation_id = payload.get("operation_id")
-    retained_operation_id = (write_operation_id(original_operation_id, original_operation_id)
-                             if original_operation_id is not None else None)
+    recovery_key = retained_operation_id(original_operation_id)
     operation_id = write_operation_id(challenge_id, original_operation_id)
     if operation_id is not None or "operation_id" in payload:
         payload["operation_id"] = operation_id
@@ -68,7 +102,7 @@ def issue_challenge_result(
             payload=payload,
         )
     except (ChallengeSuspended, ChallengeRateLimited) as exc:
-        return _limited_result(result_factory, exc, operation_id=retained_operation_id)
+        return _limited_result(result_factory, exc, operation_id=recovery_key)
     return result_factory(
         status="challenge_required",
         challenge=challenge,
@@ -89,8 +123,24 @@ def verify_or_reissue_challenge(
     challenge_id: str,
     answer: str,
     reissue_context_mismatch: bool = True,
+    supplied_operation_id: str | None = None,
 ) -> _Result | None:
-    operation_id = write_operation_id(challenge_id, payload.get("operation_id"))
+    try:
+        operation_id = retained_operation_id(runtime.challenge_manager.recovery_operation_id(
+            owner_key=owner_key, challenge_id=challenge_id,
+        ))
+    except ChallengeUnknown as exc:
+        # This verification helper runs after authentication. Preserve its
+        # bounded failure bookkeeping, while hiding foreign/missing state and
+        # never issuing a replacement or manufacturing an operation key.
+        try:
+            runtime.challenge_manager.verify_challenge(
+                owner_key=owner_key, action=action, challenge_id=challenge_id, answer=answer, payload=payload,
+            )
+        except (ChallengeExpired, ChallengeFailed, ChallengeRateLimited, ChallengeSuspended, ChallengeUnknown, ChallengeUsed):
+            pass
+        return result_factory(status="blocked", error="challenge_unknown", message=str(exc),
+                              operation_id=retained_operation_id(supplied_operation_id), retryable=False)
     try:
         runtime.challenge_manager.verify_challenge(
             owner_key=owner_key,
@@ -118,12 +168,15 @@ def verify_or_reissue_challenge(
                 message="The write target or payload changed. Review the current target and original write before requesting a new challenge.",
                 retryable=False,
             )
+        replacement_payload = dict(payload)
+        if operation_id is not None or "operation_id" in replacement_payload:
+            replacement_payload["operation_id"] = operation_id
         return issue_challenge_result(
             runtime=runtime,
             result_factory=result_factory,
             owner_key=owner_key,
             action=action,
-            payload=payload,
+            payload=replacement_payload,
             error=challenge_error_code(exc),
             message=str(exc),
         )
