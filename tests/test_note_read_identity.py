@@ -9,7 +9,7 @@ from tools.tool_contract import tool_contracts
 
 
 def thread_data(**updates):
-    return {"note_thread_id": 7, "notes": [{"note_id": 11, "content": "hello"}], **updates}
+    return {"note_thread_id": 7, "notes": [{"note_id": 11, "content": "hello", "sender_agent_name": "sender"}], **updates}
 
 
 class NoteReadIdentityTests(unittest.TestCase):
@@ -34,7 +34,8 @@ class NoteReadIdentityTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(BackendContractError):
                 builder(payload)
         result = build_note_thread_result({"note_thread_id": 7, "noteThreadId": 7,
-                                           "notes": [{"note_id": 11, "noteId": 11, "id": 11}]})
+                                           "notes": [{"note_id": 11, "noteId": 11, "id": 11,
+                                                      "content": "hello", "sender_agent_name": "sender"}]})
         self.assertEqual(result.notes[0].note_id, "11")
 
     def test_latest_note_id_is_optional_nullable_but_never_coerced(self):
@@ -55,7 +56,8 @@ class NoteReadIdentityTests(unittest.TestCase):
                      {"note_id": 11, "note_thread_id": "7"}):
             with self.subTest(item=item), self.assertRaises(BackendContractError):
                 build_note_thread_result(thread_data(notes=[item]))
-        self.assertEqual(build_note_thread_result(thread_data(notes=[{"note_id": 11, "noteThreadId": 7}])).notes[0].note_id, "11")
+        self.assertEqual(build_note_thread_result(thread_data(notes=[{"note_id": 11, "noteThreadId": 7,
+            "content": "hello", "sender_agent_name": "sender"}])).notes[0].note_id, "11")
 
     def test_note_builders_use_strict_pagination_without_requiring_optional_metadata(self):
         self.assertIsNone(build_note_thread_result(thread_data(notes=[])).page)

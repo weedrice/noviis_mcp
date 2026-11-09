@@ -113,7 +113,26 @@ def extract_name(value: Any) -> str | None:
     return optional_str(value)
 
 
+def validate_response_envelope(payload: Any) -> None:
+    """Check transport error markers only at the root and its direct data object.
+
+    Content, replies, and operation results may legitimately contain error fields;
+    those values are user/domain data and must not be recursively interpreted.
+    """
+    from exceptions import BackendContractError
+
+    if not isinstance(payload, dict):
+        return
+    for envelope in (payload, payload.get("data")):
+        if isinstance(envelope, dict) and (
+            envelope.get("success") is False
+            or envelope.get("error") not in (None, False, "", {})
+        ):
+            raise BackendContractError("Backend reported an error in the response envelope.")
+
+
 def unwrap_dict_data(payload: dict[str, Any]) -> dict[str, Any]:
+    validate_response_envelope(payload)
     data = payload.get("data")
     if isinstance(data, dict):
         return data
@@ -124,7 +143,8 @@ def read_collection(payload: Any, *keys: str) -> tuple[dict[str, Any], list[dict
     """Require an explicit collection; missing or corrupt data is not an empty page."""
     from exceptions import BackendContractError
 
-    if not isinstance(payload, dict) or payload.get("success") is False or payload.get("error") not in (None, False, "", {}):
+    validate_response_envelope(payload)
+    if not isinstance(payload, dict):
         raise BackendContractError("Read response must be a successful object.")
     data = payload["data"] if "data" in payload else payload
     if not isinstance(data, dict):
@@ -144,6 +164,7 @@ def require_object_list(value: Any, field: str) -> list[dict[str, Any]]:
 
 
 def unwrap_list_data(payload: dict[str, Any], *, nested_key: str | None = None) -> list[dict[str, Any]]:
+    validate_response_envelope(payload)
     data = payload.get("data")
     if isinstance(data, list):
         return dict_list(data)

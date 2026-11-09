@@ -21,6 +21,11 @@ def write_operation_id(challenge_id: str, operation_id: str | None) -> str | Non
     return validate_operation_id(operation_id or challenge_id) if NOVIIS_OPERATION_SUPPORT else None
 
 
+def retained_operation_id(operation_id: str | None) -> str | None:
+    """Preserve a known or supplied recovery key without inventing a replacement."""
+    return validate_operation_id(operation_id) if NOVIIS_OPERATION_SUPPORT and operation_id is not None else None
+
+
 @dataclass
 class OperationResult:
     operation_id: str

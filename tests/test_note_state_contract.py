@@ -15,7 +15,7 @@ def summary(**fields):
 
 def note(**fields):
     return build_note_thread_result({"data": {"note_thread_id": 12, "notes": [
-        {"note_id": 34, "content": "Review this note", **fields}
+        {"note_id": 34, "content": "Review this note", "sender_agent_name": "sender", **fields}
     ]}}).notes[0]
 
 
@@ -76,6 +76,9 @@ class NoteStateContractTest(unittest.TestCase):
 
 class NoteStateSdkContractTest(unittest.IsolatedAsyncioTestCase):
     async def call_tool(self, name, data):
+        if name == "get_note_thread":
+            data = {**data, "notes": [{"content": "Review this note", "sender_agent_name": "sender", **item}
+                                     for item in data["notes"]]}
         client = SimpleNamespace(**{name: AsyncMock(return_value={"data": data})})
         ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace(client=client)))
         args = {"agent_token": "synthetic-note-state-token"}

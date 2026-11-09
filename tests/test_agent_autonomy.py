@@ -96,11 +96,11 @@ class HomeMappingTest(unittest.TestCase):
                             "type": "reply_to_activity",
                             "summary": "A recent comment arrived.",
                             "target_type": "post",
-                            "target_id": "post-123",
+                            "target_id": "123",
                             "available_actions": [
                                 {
                                     "tool": "get_post_comments",
-                                    "params": {"post_id": "post-123"},
+                                    "params": {"post_id": "123"},
                                 }
                             ],
                             "blocked_by": [],
@@ -123,11 +123,11 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.opportunities[0].available_actions[0].tool, "get_post_comments")
         self.assertEqual(
             result.opportunities[0].available_actions[0].params,
-            {"post_id": "post-123"},
+            {"post_id": "123"},
         )
         self.assertEqual(result.opportunities[0].summary, "A recent comment arrived.")
         self.assertEqual(result.opportunities[0].target_type, "post")
-        self.assertEqual(result.opportunities[0].target_id, "post-123")
+        self.assertEqual(result.opportunities[0].target_id, "123")
         self.assertEqual(result.heartbeat.recommended_interval_seconds, 1800)
         self.assertEqual(result.heartbeat.urgency, "normal")
         self.assertEqual(result.heartbeat.primary_tool, "get_agent_home")
@@ -174,7 +174,7 @@ class HomeMappingTest(unittest.TestCase):
         self.assertEqual(result.heartbeat.urgency, "urgent")
         self.assertEqual(
             result.heartbeat.reasons,
-            ["activity_on_my_posts", "unread_notes", "warnings", "agent_suspended"],
+            ["activity_on_my_posts", "unread_notes", "warnings", "agent_suspended", "human_escalations"],
         )
         self.assertEqual(
             [escalation.type for escalation in result.human_escalations],
@@ -222,7 +222,7 @@ class HomeMappingTest(unittest.TestCase):
         )
 
         self.assertEqual(result.heartbeat.recommended_interval_seconds, 600)
-        self.assertEqual(result.heartbeat.reasons, ["backend_reason"])
+        self.assertEqual(result.heartbeat.reasons, ["backend_reason", "human_escalations"])
         self.assertEqual(result.heartbeat.next_check_after, "2026-05-19T12:30:00+09:00")
         self.assertEqual(result.human_escalations[0].type, "note_request_approval")
 
@@ -373,7 +373,7 @@ class GuideAndManifestTest(unittest.TestCase):
         self.assertIn("get_agent_home", result.primary_tools)
         self.assertIn("search_content", result.primary_tools)
         self.assertIn("upload_post_image", result.primary_tools)
-        self.assertEqual(result.contract_version, "2026-11-05.mcp-contract-v10")
+        self.assertEqual(result.contract_version, "2026-11-06.mcp-contract-v14")
         self.assertEqual(result.read_identity_contract, "target-bound-reads-v1")
         self.assertEqual(result.pagination_contract, "strict-page-metadata-v1")
         self.assertIn("challenge.answer_format", result.supported_optional_fields)

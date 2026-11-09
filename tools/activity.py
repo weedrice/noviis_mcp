@@ -21,6 +21,8 @@ from exceptions import BackendContractError, NoviIsAPIError
 from tools.constraint_contract import validate_hard_constraints
 from tools.challenge_flow import (
     authenticate_write,
+    check_replay_result,
+    recovery_response_operation_id,
     issue_challenge_result,
     require_challenge_pair,
     verify_or_reissue_challenge,
@@ -30,7 +32,6 @@ from tools.parsing import (
     dict_payload as _dict_payload,
     post_content, post_preview,
     extract_name as _extract_name,
-    optional_bool as _optional_bool,
     optional_int as _optional_int,
     optional_str as _optional_str,
     unwrap_dict_data as _unwrap_dict_data,
@@ -41,6 +42,8 @@ from tools.response_contract import (require_response_id, require_bool, require_
 from tools.content_safety import content_warnings
 from tools.pagination import read_pagination
 from tools.read_metadata import ReadAuthor, read_author, read_post_metadata
+from tools.comment_metadata import read_comment_metadata
+from tools.status_contract import policy_field
 
 
 @dataclass
@@ -326,7 +329,8 @@ def register_activity_tools(mcp: FastMCP) -> None:
             page=page,
             size=size,
         )
-        return _build_feed_result(payload, expected_board_id=board_id, requested_page=page, requested_size=size)
+        return _build_feed_result(payload, expected_board_id=board_id, expected_category_id=category_id,
+                                  requested_page=page, requested_size=size)
 
     @mcp.tool()
     async def get_post_comments(
@@ -551,17 +555,39 @@ def register_activity_tools(mcp: FastMCP) -> None:
         }
 
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=operation_id,
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             preflight_result = await _preflight_create_post(runtime, agent_token)
             if preflight_result is not None:
-                preflight_result.operation_id = request_payload["operation_id"]
+                replay_result = check_replay_result(
+                    runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                    challenge_id=challenge_id, operation_id=operation_id,
+                )
+                if replay_result is not None:
+                    return replay_result
+                preflight_result.operation_id = recovery_response_operation_id(
+                    runtime=runtime, owner_key=agent_token, challenge_id=challenge_id, operation_id=operation_id,
+                )
                 preflight_result.text_warnings = write_text_warnings(title, content, image_alt)
                 return preflight_result
             await authenticate_write(runtime, agent_token)
             # Resolve fallible prerequisites before consuming the single-use challenge.
             resolved_board_url = board_url or await _resolve_board_url(runtime, board_id, agent_token)
         except NoviIsAPIError as exc:
-            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=operation_id,
+            )
+            if replay_result is not None:
+                return replay_result
+            return result_factory(**write_error_fields(exc, operation_id=recovery_response_operation_id(
+                runtime=runtime, owner_key=agent_token, challenge_id=challenge_id, operation_id=operation_id,
+            )))
         # Bind the actual wire target, not just the user's ID or an empty slug.
         request_payload["resolved_board_url"] = resolved_board_url
         if challenge_id is None:
@@ -581,6 +607,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
+            supplied_operation_id=operation_id,
             reissue_context_mismatch=False,
         )
         if challenge_result is not None:
@@ -643,10 +670,24 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"post_id": post_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=operation_id,
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             await authenticate_write(runtime, agent_token)
         except NoviIsAPIError as exc:
-            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=operation_id,
+            )
+            if replay_result is not None:
+                return replay_result
+            return result_factory(**write_error_fields(exc, operation_id=recovery_response_operation_id(
+                runtime=runtime, owner_key=agent_token, challenge_id=challenge_id, operation_id=operation_id,
+            )))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -664,6 +705,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
+            supplied_operation_id=operation_id,
         )
         if challenge_result is not None:
             return challenge_result
@@ -718,10 +760,24 @@ def register_activity_tools(mcp: FastMCP) -> None:
         runtime = ctx.request_context.lifespan_context
         request_payload = {"comment_id": comment_id, "content": content}
         request_payload["operation_id"] = write_operation_id(challenge_id, operation_id) if challenge_id else operation_id
+        replay_result = check_replay_result(
+            runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+            challenge_id=challenge_id, operation_id=operation_id,
+        )
+        if replay_result is not None:
+            return replay_result
         try:
             await authenticate_write(runtime, agent_token)
         except NoviIsAPIError as exc:
-            return result_factory(**write_error_fields(exc, operation_id=request_payload["operation_id"]))
+            replay_result = check_replay_result(
+                runtime=runtime, result_factory=result_factory, owner_key=agent_token,
+                challenge_id=challenge_id, operation_id=operation_id,
+            )
+            if replay_result is not None:
+                return replay_result
+            return result_factory(**write_error_fields(exc, operation_id=recovery_response_operation_id(
+                runtime=runtime, owner_key=agent_token, challenge_id=challenge_id, operation_id=operation_id,
+            )))
         if challenge_id is None:
             return issue_challenge_result(
                 runtime=runtime,
@@ -739,6 +795,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload=request_payload,
             challenge_id=challenge_id,
             answer=answer,
+            supplied_operation_id=operation_id,
         )
         if challenge_result is not None:
             return challenge_result
@@ -832,15 +889,29 @@ def _to_board(item: dict[str, Any]) -> Board:
     )
 
 
-def _to_feed_post(item: dict[str, Any]) -> FeedPost:
+def _read_post_category_id(item: dict[str, Any], expected: str | None = None) -> str | None:
+    # Backend PostResponse nests category identity; older payloads flatten it.
+    # Missing legacy identity stays unknown, but explicit null means no category.
+    values = {key: item[key] for key in ("categoryId", "category_id") if key in item}
+    category = item.get("category")
+    if isinstance(category, dict):
+        values.update({"category." + key: category[key]
+                       for key in ("categoryId", "category_id", "id") if key in category})
+    elif "category" in item and category is None:
+        values["category"] = None
+    if not values:
+        return None
+    identity = require_positive_long_id(values, *values, nullable=True)
+    if expected is not None and identity != int(expected):
+        raise BackendContractError("Post category does not match the requested category.")
+    return str(identity) if identity is not None else None
+
+
+def _to_feed_post(item: dict[str, Any], *, expected_category_id: str | None = None) -> FeedPost:
     author_name = _extract_name(item.get("author"))
     category_value = item.get("category")
-    category_id = None
     category_name = None
     if isinstance(category_value, dict):
-        category_id = _optional_str(
-            category_value.get("categoryId", category_value.get("category_id", category_value.get("id")))
-        )
         category_name = _optional_str(category_value.get("name", category_value.get("categoryName")))
     elif category_value is not None:
         category_name = str(category_value)
@@ -853,7 +924,7 @@ def _to_feed_post(item: dict[str, Any]) -> FeedPost:
         content_preview=post_preview(item),
         content=post_content(item),
         board_id=require_response_id(item, "boardId", "board_id"),
-        category_id=_optional_str(item.get("categoryId", item.get("category_id"))) or category_id,
+        category_id=_read_post_category_id(item, expected_category_id),
         category_name=_optional_str(item.get("categoryName", item.get("category_name"))) or category_name,
         content_warnings=content_warnings(
             str(item.get("title", "")) + "\n"
@@ -866,15 +937,15 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
     raw_replies = item.get("children", item.get("replies", []))
     if not isinstance(raw_replies, list):
         raw_replies = []
-    legacy_deleted = bool(_optional_bool(item.get("isDeleted", item.get("is_deleted")), False))
-    status = str(item.get("status") or ("DELETED" if legacy_deleted else "ACTIVE")).upper()
-    content = str(item.get("content", item.get("body", ""))) if status == "ACTIVE" else ""
-    reply_count = int(item.get("replyCount", item.get("reply_count", len(raw_replies))))
+    metadata = read_comment_metadata(item, nested_reply_count=len(raw_replies))
+    status = metadata["status"]
+    content = policy_field(item, "content", str, label="comment", aliases=("body",)) if status == "ACTIVE" else ""
     parent_id = require_positive_long_id(item, "parentId", "parent_comment_id", "parentCommentId", "parent_id", nullable=True)
     comment_id = require_response_id(item, "commentId", "comment_id", "id")
     if parent_id is not None and str(parent_id) == comment_id:
         raise BackendContractError("Comment cannot be its own parent.")
     return Comment(
+        **metadata,
         author=read_author(item.get("author")),
         comment_id=comment_id,
         post_id=require_response_id(item, "postId", "post_id"),
@@ -882,12 +953,6 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
         content=content,
         created_at=str(item.get("createdAt", item.get("created_at", ""))),
         author_name=_extract_name(item.get("author")),
-        depth=int(item.get("depth", 0)),
-        reply_count=reply_count,
-        has_replies=bool(_optional_bool(item.get("hasReplies", item.get("has_replies")), reply_count > 0)),
-        status=status,
-        like_count=int(item.get("likeCount", item.get("like_count", 0))),
-        is_deleted=status == "DELETED",
         board_url=_optional_str(item.get("boardUrl", item.get("board_url"))),
         post_title=_optional_str(item.get("postTitle", item.get("post_title"))),
         replies=replies or [],
@@ -896,10 +961,11 @@ def _to_comment(item: dict[str, Any], replies: list[Comment] | None = None) -> C
 
 
 def _build_feed_result(payload: dict[str, Any], *, expected_board_id: str | None = None,
+                       expected_category_id: str | None = None,
                        requested_page: int | None = None, requested_size: int | None = None) -> FeedResult:
     data, raw_posts = read_collection(payload, "content", "posts")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
-    posts = [_to_feed_post(item) for item in raw_posts]
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_posts))
+    posts = [_to_feed_post(item, expected_category_id=expected_category_id) for item in raw_posts]
     if expected_board_id is not None:
         for item in raw_posts:
             require_target_id(item, expected_board_id, "boardId", "board_id")
@@ -921,7 +987,7 @@ def _build_comments_result(payload: dict[str, Any], *, expected_post_id: str | N
                            expected_parent_id: str | None = None, roots_only: bool = False,
                            requested_page: int | None = None, requested_size: int | None = None) -> CommentsResult:
     data, raw_comments = read_collection(payload, "content", "comments")
-    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size)
+    pagination = read_pagination(data, requested_page=requested_page, requested_size=requested_size, item_count=len(raw_comments))
     comments, filtered_count = _filter_comments(raw_comments, expected_post_id=expected_post_id,
                                                expected_parent_id=expected_parent_id, roots_only=roots_only)
     return CommentsResult(

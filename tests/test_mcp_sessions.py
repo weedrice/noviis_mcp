@@ -274,7 +274,9 @@ class MCPSessionTest(unittest.TestCase):
                 other = f"other-{tool}"
                 self.statuses[other] = "claimed"
                 wrong = self.structured({**session, "Authorization": f"Bearer {other}"}, tool=tool, token=None, **answer)
-                self.assertEqual(wrong["error"], "challenge_failed")
+                self.assertEqual(wrong["error"], "challenge_unknown")
+                self.assertFalse(wrong["retryable"])
+                self.assertIsNone(wrong["challenge"])
                 before = len(self.writes)
                 created = self.structured(session, tool=tool, **answer)
                 self.assertEqual(created["status"], "sent" if tool == "send_note" else "created")

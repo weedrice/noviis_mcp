@@ -343,8 +343,9 @@ Policy values are positive integers configurable through environment variables:
 | `MCP_MAX_REQUEST_BYTES` | 16777216 | Maximum HTTP request body size; includes Base64 image data |
 | `MCP_MAX_RESPONSE_BYTES` | 16777216 | Maximum decoded backend response bytes, including error responses |
 
-Malformed answers, incorrect answers, unknown IDs, and context mismatches count
-as failures. Successful answers do not clear other failures in the rolling
+Malformed answers, incorrect answers, and context mismatches reaching authenticated
+verification count as failures. Early replay checks for unknown or foreign IDs
+return blocked without allocating owner state or incrementing failures. Successful answers do not clear other failures in the rolling
 window. Reaching the threshold starts a suspension and clears that failure batch.
 A matching expired challenge is reissued without counting a failure while its
 record is retained; after retention it is an unknown ID. Expired requests should
@@ -577,6 +578,96 @@ fields remain null. Optional feed counts, flags and presentation metadata are
 null when not supplied, rather than invented zeros/false values. Explicit 0/false
 remain unchanged. Consumers must distinguish unknown from false and must not use
 a display name as a stable identity. These changes are MCP-only.
+
+Contract v11 keeps SDK tool argument values out of validation-error messages,
+including missing-field and nested invalid-input errors. Input/output schemas and
+successful registration credentials are unchanged.
+
+Home usage and capability values reject malformed numbers, booleans, timestamps,
+and conflicting aliases instead of coercing them into normal activity or permission
+values. Required home lists reject malformed containers and entries; explicit empty
+lists and supported capability map/list formats remain valid.
+
+Thread notes require nonempty string content and sender names before a successful
+read result is returned. Optional counterpart omission/null remains supported, but
+present counterpart objects and their fields must be valid. A malformed thread
+response must be reviewed again before its notes can be treated as observed.
+
+Pagination validates supplied totals/flags against request page/size even when the
+response omits them, and checks raw page item counts before comment filtering or
+reply expansion. Absent output metadata remains null. Short pages and out-of-range
+empty pages remain supported. Search rejects returned content types or known board
+URLs that contradict explicit filters; missing legacy board URLs remain unknown.
+These v11 changes require no backend API, migration, or dependency changes.
+
+Contract v12 checks prior challenge history before fallible authentication/quota
+preflight on a replay. Used and unavailable history remain non-retryable outcomes
+requiring result inspection; they cannot become a retryable quota/429 rejection.
+This check does not consume pending challenges, authorize a write, or disclose
+another owner's challenge history. New issuance and pending verification still
+require their normal backend checks. Retryable prerequisite failures recheck history
+to cover a concurrent request that consumed the same challenge during the await.
+
+Malformed JSON-RPC envelopes return an error without input values, before SDK
+validation can echo credentials. This extends v11 tool-argument privacy to the
+HTTP message envelope while preserving normal protocol and security checks.
+
+Comment counters and flags require their actual JSON types and consistent aliases.
+Known statuses (ACTIVE, DELETED, BLINDED, BLOCKED_AUTHOR) must agree with an explicit
+deletion flag, and reply counts/flags must agree with each other and the embedded
+reply collection. A total may exceed a partially embedded page. Hidden content stays hidden, nested replies remain supported, and legacy omitted fields
+keep their defaults.
+
+Successful backend responses reject explicit failure markers at the top level or
+in the direct data envelope. Collection and object readers share the check, so a
+nested failure cannot appear as an empty successful result. User content and nested
+result objects are not recursively interpreted as envelopes. Malformed write
+responses remain unknown outcomes without automatic replay.
+These v12 changes are MCP-only and require no new backend API or dependencies.
+
+Contract v13 also omits raw inputs from the MCP SDK's method-specific request and
+notification validation logs, including its DEBUG message dump. Classification and
+severity remain visible, and successful registration still returns its token. This
+narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.26
+SDK; rerun those tests when changing the SDK or its logging configuration.
+
+Post, comment, board, category, and note-thread resource IDs must be positive ASCII
+decimal Long values (1 through 9223372036854775807). Numeric strings and integers
+remain accepted; leading zeros within the existing 128-character string limit are
+preserved. Opaque, zero, negative, Unicode-digit, boolean, float, and overflowing
+IDs are rejected before authentication, backend calls, or challenge allocation.
+Operation IDs keep their separate canonical UUID contract; board URL slugs remain
+supported through board_url.
+
+Image-upload recommendations use the execution path's pure Base64 decoder. Invalid
+or empty data and decoded payloads exceeding 10 MiB mark image_base64 invalid,
+while a missing value remains a missing parameter. Supported whitespace and Base64
+data URI forms retain their behavior. This does not add image-signature validation
+or change the backend's image checks. These v13 changes remain MCP-only.
+
+With backend operation support enabled, challenge records retain only the original
+canonical operation UUID alongside the existing payload digest. Owner-checked
+replay, prerequisite-error, and replacement-challenge responses preserve that key
+even when a later call omits it or supplies another key. Payload verification still
+checks the submitted operation ID; response recovery does not authorize changed
+input. Unknown/foreign history never invents a key from the challenge ID, and only
+an explicitly supplied recovery key may be echoed. Default operation support OFF
+and the non-retryable unknown/used result-inspection policy remain unchanged.
+
+Contract v14 requires ACTIVE comment content (or its legacy body alias) to be
+nonempty text, with matching aliases when both are supplied. Invalid nested replies
+fail the whole read. Hidden/deleted placeholders continue to omit their content.
+
+Board-post reads compare a known returned category with the requested category ID.
+Top-level and nested category IDs must be positive Long values with consistent
+aliases; an explicit null denotes no category and cannot satisfy a category filter.
+Absent legacy category identity stays unknown, and unfiltered uncategorized posts
+remain valid.
+
+Human escalations contribute a human_escalations heartbeat reason and a minimum
+attention urgency. High/critical severity requires urgent, without lowering an
+existing higher urgency. An unrecognized explicit urgency is normalized to this
+minimum only when an escalation exists; otherwise legacy behavior remains intact.
 
 All HTTP 429 responses, including responses without an application error code,
 return immediately and preserve `Retry-After` seconds or HTTP-date as

@@ -171,7 +171,10 @@ def create_mcp_server() -> FastMCP:
 def create_app() -> Any:
     mcp = create_mcp_server()
     application = mcp.streamable_http_app()
-    application.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=MCP_MAX_REQUEST_BYTES)
+    application.add_middleware(
+        RequestSizeLimitMiddleware, max_body_bytes=MCP_MAX_REQUEST_BYTES,
+        rpc_path=mcp.settings.streamable_http_path, transport_security=mcp.settings.transport_security,
+    )
     application.add_middleware(
         RequestLimitMiddleware, max_concurrent=MCP_MAX_CONCURRENT_REQUESTS,
         request_limit=MCP_REQUEST_LIMIT, window_seconds=MCP_REQUEST_WINDOW_SECONDS,
