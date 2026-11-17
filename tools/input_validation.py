@@ -69,7 +69,7 @@ def operation_id(value: str) -> str:
 
 
 def resource_id(value: str | int) -> str:
-    """Accept backend Long identities while preserving legacy leading zeros."""
+    """Normalize backend Long identities before requests and challenge binding."""
     maximum = 9_223_372_036_854_775_807
     if type(value) is int:
         # Check before str(): an untrusted integer may have thousands of digits.
@@ -81,7 +81,7 @@ def resource_id(value: str | int) -> str:
     normalized = value.lstrip("0")
     if not normalized or len(normalized) > 19 or int(normalized) > maximum:
         raise ValueError("Resource ID must be a positive decimal Long.")
-    return value
+    return normalized
 
 
 def board_lookup_id(value: str | int) -> int:

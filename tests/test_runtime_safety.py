@@ -139,6 +139,27 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
         self.assertCountEqual([result.status for result in results], ["created", "blocked"])
         self.assertEqual(self.client.create_comment.await_count, 1)
 
+    async def test_numeric_id_forms_share_the_same_challenge_payload(self):
+        cases = [
+            ("create_post", "board_id", "002", "2", {"title": "sample"}),
+            ("create_comment", "post_id", "001", "1", {}),
+            ("create_reply", "comment_id", "002", "2", {}),
+        ]
+        for name, key, padded, canonical, extra in cases:
+            with self.subTest(name=name):
+                function = self.registry.functions[name]
+                kwargs = dict(ctx=self.ctx, agent_token="owner", content="sample" * 10, **extra)
+                issued = await function(**kwargs, **{key: padded})
+                self.assertEqual(issued.status, "challenge_required")
+                result = await function(**kwargs, **{key: canonical},
+                                        challenge_id=issued.challenge.challenge_id, answer="2.00")
+                self.assertEqual(result.status, "created")
+                sent = getattr(self.client, name).call_args.kwargs
+                if key == "board_id":
+                    self.assertEqual(sent["board_url"], "normal")
+                else:
+                    self.assertEqual(sent[key], canonical)
+
 
 
 class MCPRegistrationTest(unittest.IsolatedAsyncioTestCase):
