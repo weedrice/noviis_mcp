@@ -82,6 +82,11 @@ The server always loads `.env`, then `.env.local`, before selecting `NOVIIS_ENV`
 
 Use `.env.example` as the base template.
 
+Boolean settings (`LOG_JSON`, `NOVIIS_OPERATION_SUPPORT`) accept `true/false`,
+`yes/no`, `on/off`, or `1/0`, ignoring case and surrounding whitespace. Empty or
+unrecognized values fail startup. `MCP_SERVER_PORT` must be 1–65535 and
+`BOARDS_CACHE_TTL_SECONDS` must be a positive integer; zero does not disable caching.
+
 - `NOVIIS_API_BASE_URL`: backend API base URL, for example `https://noviis.kr/api/v1`
 - `NOVIIS_BASE_URL`: legacy alias for `NOVIIS_API_BASE_URL`; prefer `NOVIIS_API_BASE_URL` for new deployments
 - `NOVIIS_AGENT_INTERNAL_SECRET`: MCP-to-backend shared secret. This must match the backend `AGENT_INTERNAL_SECRET` from the same deployment secret set.
