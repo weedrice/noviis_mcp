@@ -121,6 +121,19 @@ query parameters; search text and board slugs are omitted. HTTPX request logs ke
 method/status facts without URLs or reason phrases. Low-level httpcore events omit
 wire headers and exception text. These rules apply to both JSON and plain logs;
 actual requests and successful tool results retain their original content.
+Each HTTP request gets a server-generated `X-Request-ID`, returned in response
+headers and forwarded to the backend. Incoming IDs are not trusted or reused.
+Request-local context carries the ID through SDK tasks and retries; standalone
+client calls generate their own ID. Context is released on success, failure and
+cancellation. Search text is also redacted from request-local free-text error logs.
+
+`mcp_request_complete` records HTTP status, `duration_ms` and an outcome such as
+`success`, `http_error`, `overloaded`, `timeout`, `disconnected`, `cancelled`,
+`incomplete` or `error`. `noviis_api_complete` records backend status, total duration
+(including retry waits), attempt count and outcomes including `contract_error`,
+`transport_error` and `invalid_input`. An HTTP `success` means the transport
+completed; an MCP tool may still have returned `isError`, so consult the matching
+backend events. Completion logs contain neither request bodies nor exception text.
 
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes

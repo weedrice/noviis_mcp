@@ -23,8 +23,9 @@ class SearchLogPrivacyTest(unittest.IsolatedAsyncioTestCase):
                         handler.addFilter(SensitiveDataFilter())
                     root = logging.getLogger()
                     old_level = root.level
+                    old_handlers = root.handlers[:]
                     root.setLevel(logging.INFO)
-                    root.addHandler(handler)
+                    root.handlers = [handler]
                     seen = []
 
                     def backend(request):
@@ -36,7 +37,7 @@ class SearchLogPrivacyTest(unittest.IsolatedAsyncioTestCase):
                             await NoviIsClient(client=http, internal_secret="synthetic").search_semantic(
                                 query=query, page=2, size=10, content_type="POST")
                     finally:
-                        root.removeHandler(handler)
+                        root.handlers = old_handlers
                         root.setLevel(old_level)
                     self.assertEqual(seen[0].url.params["q"], query)
                     logs = output.getvalue()
