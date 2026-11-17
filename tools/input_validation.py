@@ -24,6 +24,14 @@ _TOOL_SIZE_ADAPTERS = {name: TypeAdapter(kind) for name, kind in {
 RESOURCE_ID_PARAMS = {"post_id", "comment_id", "board_id", "category_id", "note_thread_id"}
 
 
+def image_mime_type(value: str) -> str:
+    if not isinstance(value, str) or value.strip().lower() not in {
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+    }:
+        raise ValueError("mime_type must be image/jpeg, image/png, image/gif, or image/webp.")
+    return value.strip().lower()
+
+
 def _observed_comment_id(value: str | int) -> str:
     if type(value) not in (str, int) or not re.fullmatch(r"[0-9]{1,19}", str(value)):
         raise ValueError("Observed comment IDs must be positive decimal IDs.")
@@ -128,6 +136,8 @@ def validate_registration_description(value: Any) -> None:
 
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
     """Validate tool arguments before backend calls or challenge state changes."""
+    if "mime_type" in values:
+        image_mime_type(values["mime_type"])
     for key in ("post_id", "comment_id", "board_id", "category_id", "note_thread_id"):
         if values.get(key) is not None:
             resource_id(values[key])

@@ -109,6 +109,12 @@ are required. Malformed items fail with `backend_contract_error` and the next
 ordinary read can fetch a corrected response immediately. Optional descriptive
 metadata remains optional; null descriptions are rendered as empty text.
 
+Image uploads accept only `image/jpeg`, `image/png`, `image/gif`, and `image/webp`.
+MIME values are normalized to lowercase before forwarding. A Base64 data URI must
+declare the same supported MIME type as `mime_type`; incompatible declarations
+are rejected before upload, including in recommended-action validation. Actual
+image signatures and decoding remain the backend's responsibility.
+
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes
 `X-NoviIs-Agent: true` and `X-NoviIs-Internal-Secret`; requests for a claimed

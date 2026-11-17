@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
-from tools.input_validation import board_lookup_id, validate_post_board_target
+from tools.input_validation import board_lookup_id, validate_post_board_target, image_mime_type
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, FeedPageSize, ReadPageSize, ResourceId, ObservedCommentIds, observed_comment_ids as normalize_observed_ids, resource_id, validate_tool_inputs, feed_pagination
 
@@ -468,7 +468,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         validate_tool_inputs(locals())
         agent_token = resolve_agent_token(ctx, agent_token)
         try:
-            image_bytes = _decode_post_image(image_base64)
+            image_bytes = _decode_post_image(image_base64, mime_type=mime_type)
         except ValueError as exc:
             return UploadPostImageResult(
                 status="blocked",
@@ -481,7 +481,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload = await runtime.client.upload_post_image(
                 token=agent_token,
                 filename=filename,
-                mime_type=mime_type,
+                mime_type=image_mime_type(mime_type),
                 image_bytes=image_bytes,
             )
         except NoviIsAPIError as exc:
@@ -1103,14 +1103,21 @@ async def _preflight_create_post(runtime: Any, agent_token: str) -> CreatePostRe
     )
 
 
-def _decode_post_image(image_base64: str) -> bytes:
+def _decode_post_image(image_base64: str, *, mime_type: str | None = None) -> bytes:
     if not image_base64 or not image_base64.strip():
         raise ValueError("image_base64 must not be empty.")
     encoded = image_base64.strip()
-    if encoded.startswith("data:"):
+    expected_mime = image_mime_type(mime_type) if mime_type is not None else None
+    if encoded.lower().startswith("data:"):
         header, separator, encoded = encoded.partition(",")
-        if not separator or ";base64" not in header.lower():
+        parts = header[5:].split(";")
+        if (not separator or len(parts) < 2 or parts[-1].lower() != "base64"
+                or any("=" not in part or not part.split("=", 1)[0] for part in parts[1:-1])
+                or any(char in header for char in "\r\n\x00")):
             raise ValueError("image_base64 data URI must use Base64 encoding.")
+        declared_mime = image_mime_type(parts[0])
+        if expected_mime is not None and declared_mime != expected_mime:
+            raise ValueError("image_base64 data URI MIME type must match mime_type.")
     encoded = "".join(encoded.split())
     try:
         decoded = base64.b64decode(encoded, validate=True)

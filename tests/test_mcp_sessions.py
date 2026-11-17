@@ -230,6 +230,8 @@ class MCPSessionTest(unittest.TestCase):
             if tool["name"] == "search_content":
                 continue
             arguments = {name: "1" for name in schema.get("required", [])}
+            if tool["name"] == "upload_post_image":
+                arguments.update(filename="image.png", mime_type="image/png", image_base64="eA==")
             if tool["name"] == "send_note":
                 arguments["note_thread_id"] = 1
             if tool["name"] == "create_post":
