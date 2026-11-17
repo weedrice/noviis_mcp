@@ -23,6 +23,12 @@ python main.py
 This repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml`
 for deploying to a Linux WAS over SSH.
 
+CI also runs the complete regression suite and the in-process MCP initialization
+check on Windows Server 2022 / CPython 3.11 x64. `requirements-windows.lock` includes
+the shared dependency lock plus hashed Windows-only wheels. POSIX-only deployment
+tests run in the Linux job. Both platforms must pass before main can deploy;
+release artifacts are still built only on Linux.
+
 Deployment flow:
 
 1. On pull requests and main pushes, CI installs the hash-locked pip from `requirements-installer.lock`, then the locked build tools, and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
