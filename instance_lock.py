@@ -83,4 +83,3 @@ class PIDLock:
             # Retain the inode: unlinking would let a successor lock a different
             # file while another contender still holds this one open.
             lock_file.close()
-

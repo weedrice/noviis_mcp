@@ -273,7 +273,8 @@ SDK; rerun those tests when changing the SDK or its logging configuration.
 Post, comment, board, category, and note-thread resource IDs must be positive ASCII
 decimal Long values (1 through 9223372036854775807). Numeric strings and integers
 remain accepted; leading zeros within the existing 128-character string limit are
-preserved. Opaque, zero, negative, Unicode-digit, boolean, float, and overflowing
+normalized before backend requests and challenge binding (`"0007"` becomes `"7"`).
+Opaque, zero, negative, Unicode-digit, boolean, float, and overflowing
 IDs are rejected before authentication, backend calls, or challenge allocation.
 Operation IDs keep their separate canonical UUID contract; board URL slugs remain
 supported through board_url.
