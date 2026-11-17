@@ -98,6 +98,12 @@ unrecognized values fail startup. `MCP_SERVER_PORT` must be 1–65535 and
 - `NOVIIS_AGENT_INTERNAL_SECRET`: MCP-to-backend shared secret. This must match the backend `AGENT_INTERNAL_SECRET` from the same deployment secret set.
 - `BOARDS_CACHE_TTL_SECONDS`: board list cache TTL in seconds, defaults to `300`; entries are isolated by agent token, with a maximum of 256 cached identities
 
+Concurrent ordinary cache misses for the same agent share one board-list request.
+Each caller receives its own copy. Force refresh and invalidation detach older
+loads, preventing stale cache repopulation. A cancelled waiter does not cancel the
+fetch; if the fetch owner is cancelled, remaining callers retry with their own
+HTTP client and request deadline. No background fetch outlives its owning request.
+
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes
 `X-NoviIs-Agent: true` and `X-NoviIs-Internal-Secret`; requests for a claimed
