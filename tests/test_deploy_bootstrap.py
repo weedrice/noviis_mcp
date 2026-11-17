@@ -29,6 +29,7 @@ class BootstrapTest(unittest.TestCase):
                     "ARCHIVE_SHA256": hashlib.sha256(self.archive.read_bytes()).hexdigest(),
                     "PATH": str(self.root) + os.pathsep + os.environ["PATH"]}
         self.env.pop("PYTHON_BIN", None)
+        self.env.pop("CLEANUP_ARCHIVE", None)
         self.script = Path(__file__).resolve().parents[1] / "deploy/deploy.sh"
         self.executable("python3", "exit 21")
         self.executable("python3.11", f'exec {shlex.quote(sys.executable)} "$@"')
@@ -63,3 +64,24 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(result.returncode, 21)
         self.assertNotIn("synthetic helper ran", result.stdout)
         self.assertFalse((self.root / "app").exists())
+
+    def test_archive_is_retained_by_default(self):
+        self.assertEqual(self.invoke().returncode, 0)
+        self.assertTrue(self.archive.exists())
+
+    def test_ci_archive_is_removed_after_success(self):
+        self.env["CLEANUP_ARCHIVE"] = "1"
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.archive.exists())
+
+    def test_ci_archive_is_removed_after_failure_without_masking_exit_status(self):
+        self.env.update(CLEANUP_ARCHIVE="1", PYTHON_BIN="python3")
+        result = self.invoke()
+        self.assertEqual(result.returncode, 21)
+        self.assertFalse(self.archive.exists())
+
+    def test_unverified_archive_is_never_deleted(self):
+        self.env.update(CLEANUP_ARCHIVE="1", ARCHIVE_SHA256="0" * 64)
+        self.assertNotEqual(self.invoke().returncode, 0)
+        self.assertTrue(self.archive.exists())

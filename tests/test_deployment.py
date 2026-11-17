@@ -101,6 +101,27 @@ class DeploymentTest(unittest.TestCase):
         switch.assert_not_called()
         self.assertEqual(entry.read_bytes(), b"# old")
 
+    def test_retention_runs_only_after_success_and_cannot_trigger_rollback(self):
+        events = []
+        switch = Mock()
+        with patch("deploy.deploy_release.prune_releases", side_effect=OSError("locked file")) as prune:
+            release = self.run_deploy(run=Mock(), switch=switch,
+                                      smoke=lambda *args, **kwargs: events.append("healthy"), keep_releases=3)
+        self.assertEqual(events, ["healthy"])
+        self.assertEqual(switch.call_count, 1)
+        prune.assert_called_once_with(self.app, protected=(release,), keep=3)
+        with patch("deploy.deploy_release.prune_releases") as prune:
+            with self.assertRaises(RuntimeError):
+                self.run_deploy(run=Mock(), switch=Mock(), smoke=Mock(side_effect=RuntimeError("bad")))
+            prune.assert_not_called()
+
+    def test_invalid_retention_does_not_install_or_activate(self):
+        run, switch = Mock(), Mock()
+        with self.assertRaisesRegex(ValueError, "RELEASE_KEEP_COUNT"):
+            self.run_deploy(run=run, switch=switch, keep_releases=1)
+        run.assert_not_called()
+        switch.assert_not_called()
+
     def test_installer_bootstrap_failure_prevents_dependency_install_and_service_changes(self):
         entry = self.app / "main.py"
         entry.write_bytes(b"# running release")
