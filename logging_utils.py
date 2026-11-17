@@ -55,8 +55,46 @@ SDK_VALIDATION_MESSAGES = {
 }
 
 
+def safe_log_params(params: Any) -> dict[str, Any]:
+    """Only bounded pagination and a known content filter belong in diagnostics."""
+    if not params:
+        return {}
+    result = {key: params[key] for key in ("page", "size", "limit")
+              if key in params and type(params[key]) is int and 0 <= params[key] <= 1_000_000}
+    if params.get("contentType") in ("ALL", "POST", "COMMENT"):
+        result["contentType"] = params["contentType"]
+    return result
+
+
+def _prepare_http_record(record: logging.LogRecord) -> None:
+    """HTTPX URLs and httpcore wire diagnostics can contain arbitrary user data.
+
+    Keep safe method/status facts from the pinned HTTPX request event. Application
+    events provide paths and failures; wire headers and reason phrases are omitted.
+    Also called by formatters so privacy does not depend on handler configuration.
+    """
+    if getattr(record, "_http_privacy_prepared", False):
+        return
+    if record.name == "httpx" or record.name.startswith("httpx."):
+        args = record.args
+        if record.msg == 'HTTP Request: %s %s "%s %d %s"' and isinstance(args, tuple) and len(args) == 5:
+            if args[0] in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+                record.http_method = args[0]
+            if type(args[3]) is int and 100 <= args[3] <= 599:
+                record.status_code = args[3]
+        record.msg = "httpx_request"
+    elif record.name == "httpcore" or record.name.startswith("httpcore."):
+        record.msg = "httpcore_event"
+    else:
+        return
+    record.args = ()
+    record.exc_info = record.exc_text = record.stack_info = None
+    record._http_privacy_prepared = True
+
+
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        _prepare_http_record(record)
         # Render first: redacting a format string can remove its % placeholders.
         message = record.getMessage()
         # MCP SDK 1.26 logs method-specific validation errors and raw messages
@@ -89,6 +127,7 @@ class SensitiveDataFilter(logging.Filter):
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        _prepare_http_record(record)
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
@@ -109,6 +148,7 @@ class JsonFormatter(logging.Formatter):
 
 class PlainFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        _prepare_http_record(record)
         base = super().format(record)
         extras = {key: _sanitize_secret_key(key, value) for key, value in _extra_record_items(record)}
         if extras:

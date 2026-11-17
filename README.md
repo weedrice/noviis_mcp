@@ -116,6 +116,12 @@ declare the same supported MIME type as `mime_type`; incompatible declarations
 are rejected before upload, including in recommended-action validation. Actual
 image signatures and decoding remain the backend's responsibility.
 
+Request logs retain only typed pagination values and known content filters from
+query parameters; search text and board slugs are omitted. HTTPX request logs keep
+method/status facts without URLs or reason phrases. Low-level httpcore events omit
+wire headers and exception text. These rules apply to both JSON and plain logs;
+actual requests and successful tool results retain their original content.
+
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes
 `X-NoviIs-Agent: true` and `X-NoviIs-Internal-Secret`; requests for a claimed

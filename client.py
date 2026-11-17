@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import anyio
 from cache import clear_boards_cache
-from logging_utils import sanitize_error_data
+from logging_utils import sanitize_error_data, safe_log_params
 
 from config import (
     AGENT_API_PREFIX,
@@ -104,7 +104,7 @@ class NoviIsClient:
                         "http_method": method.upper(),
                         "path": path,
                         "token": mask_token(token),
-                        "params": dict(params) if params else None,
+                        "params": safe_log_params(params),
                     },
                 )
                 # Bound the whole HTTP attempt, not only individual httpx phases.
