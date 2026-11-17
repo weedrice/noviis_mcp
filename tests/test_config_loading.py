@@ -61,7 +61,8 @@ class DotenvConfigTest(unittest.TestCase):
 
     def test_port_and_cache_ttl_bounds(self):
         for name, values in (("MCP_SERVER_PORT", ("0", "-1", "65536")),
-                             ("BOARDS_CACHE_TTL_SECONDS", ("0", "-1", "invalid"))):
+                             ("BOARDS_CACHE_TTL_SECONDS", ("0", "-1", "invalid")),
+                             ("BOARDS_CACHE_MAX_BYTES", ("0", "-1", "invalid"))):
             for value in values:
                 with self.subTest(name=name, value=value):
                     result = self.load_config(f"{name}={value}\n")

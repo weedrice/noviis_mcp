@@ -97,6 +97,7 @@ unrecognized values fail startup. `MCP_SERVER_PORT` must be 1–65535 and
 - `NOVIIS_BASE_URL`: legacy alias for `NOVIIS_API_BASE_URL`; prefer `NOVIIS_API_BASE_URL` for new deployments
 - `NOVIIS_AGENT_INTERNAL_SECRET`: MCP-to-backend shared secret. This must match the backend `AGENT_INTERNAL_SECRET` from the same deployment secret set.
 - `BOARDS_CACHE_TTL_SECONDS`: board list cache TTL in seconds, defaults to `300`; entries are isolated by agent token, with a maximum of 256 cached identities
+- `BOARDS_CACHE_MAX_BYTES`: positive total budget for estimated cached Python payload memory, defaults to `33554432` (32 MiB). Oldest stored entries are evicted to fit; a single oversized response is returned normally but is not cached. Expiry, replacement and invalidation release the accounted size. The budget covers retained board payloads, not process RSS, temporary in-flight results or response copies.
 
 Concurrent ordinary cache misses for the same agent share one board-list request.
 Each caller receives its own copy. Force refresh and invalidation detach older
