@@ -15,7 +15,7 @@ class BoardCacheTest(unittest.IsolatedAsyncioTestCase):
 
     def test_isolation_expiry_and_copying(self):
         with patch("cache.time.monotonic", return_value=100), patch("cache.BOARDS_CACHE_TTL_SECONDS", 300):
-            original = [{"boardId": 2, "boardUrl": "private-a"}]
+            original = [{"postCount": 0, "boardId": 2, "boardUrl": "private-a"}]
             set_boards_cache(original, agent_token="agent-a")
             original[0]["boardUrl"] = "mutated"
             self.assertIsNone(get_boards_cache("agent-b"))
@@ -39,9 +39,9 @@ class BoardCacheTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(get_boards_cache("c"), [])
 
     async def test_write_resolution_always_fetches_only_current_agents_boards(self):
-        fetch = AsyncMock(return_value={"data": [{"board_id": 2, "board_url": "own-board"}]})
+        fetch = AsyncMock(return_value={"data": [{"postCount": 0, "board_id": 2, "board_url": "own-board"}]})
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
-        set_boards_cache([{"boardId": 2, "boardUrl": "other-private-board"}], agent_token="other")
+        set_boards_cache([{"postCount": 0, "boardId": 2, "boardUrl": "other-private-board"}], agent_token="other")
         self.assertEqual(await _resolve_board_url(runtime, 2, "current"), "own-board")
         self.assertEqual(await _resolve_board_url(runtime, 2, "current"), "own-board")
         self.assertEqual(fetch.await_count, 2)

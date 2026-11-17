@@ -103,6 +103,11 @@ Each caller receives its own copy. Force refresh and invalidation detach older
 loads, preventing stale cache repopulation. A cancelled waiter does not cancel the
 fetch; if the fetch owner is cancelled, remaining callers retry with their own
 HTTP client and request deadline. No background fetch outlives its owning request.
+Board items are validated before entering the cache: positive numeric IDs, valid
+board URL slugs, nonnegative post counts, category objects and consistent aliases
+are required. Malformed items fail with `backend_contract_error` and the next
+ordinary read can fetch a corrected response immediately. Optional descriptive
+metadata remains optional; null descriptions are rendered as empty text.
 
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes

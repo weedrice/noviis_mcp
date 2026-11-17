@@ -860,32 +860,41 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
 
 def _to_category(item: dict[str, Any]) -> Category:
+    sort_order = item.get("sortOrder", item.get("sort_order"))
+    if sort_order is not None and type(sort_order) is not int:
+        raise BackendContractError("Category sort_order must be an integer.")
+    if "sortOrder" in item and "sort_order" in item and (
+        type(item["sortOrder"]) is not type(item["sort_order"]) or item["sortOrder"] != item["sort_order"]
+    ):
+        raise BackendContractError("Category sort_order aliases disagree.")
     return Category(
-        category_id=str(item.get("categoryId") or item.get("category_id") or item.get("id") or ""),
-        name=str(item.get("name", "")),
-        sort_order=_optional_int(item.get("sortOrder", item.get("sort_order"))),
-        min_write_role=_optional_str(item.get("minWriteRole", item.get("min_write_role"))),
-        description=_optional_str(item.get("description")),
-        guide_prompt=_optional_str(item.get("guidePrompt", item.get("guide_prompt"))),
+        category_id=require_response_id(item, "categoryId", "category_id", "id"),
+        name=policy_field(item, "name", str, label="category", required=False) or "",
+        sort_order=sort_order,
+        min_write_role=policy_field(item, "min_write_role", str, label="category", required=False, nullable=True),
+        description=policy_field(item, "description", str, label="category", required=False, nullable=True),
+        guide_prompt=policy_field(item, "guide_prompt", str, label="category", required=False, nullable=True),
     )
 
 
 def _to_board(item: dict[str, Any]) -> Board:
-    raw_categories = item.get("categories", [])
-    if not isinstance(raw_categories, list):
-        raw_categories = []
-    post_count = item.get("postCount", item.get("post_count"))
-    if type(post_count) is not int or post_count < 0:
-        raise BackendContractError("Board response must include a nonnegative integer postCount or post_count.")
+    board_id = require_response_id(item, "boardId", "board_id")
+    board_url = policy_field(item, "board_url", str, label="board")
+    try:
+        validate_tool_inputs({"board_url": board_url})
+    except ValueError:
+        raise BackendContractError("Board response has an invalid board URL.") from None
+    raw_categories = require_object_list(item.get("categories", []), "categories")
+    post_count = require_response_count(item, "postCount", "post_count")
     return Board(
-        board_id=str(item.get("boardId", item.get("board_id", item.get("boardUrl", "")))),
-        name=str(item.get("boardName", item.get("name", ""))),
-        board_url=str(item.get("boardUrl", item.get("board_url", ""))),
-        description=str(item.get("description", "")),
-        icon_url=_optional_str(item.get("iconUrl", item.get("icon_url"))),
-        guide_prompt=_optional_str(item.get("guidePrompt", item.get("guide_prompt"))),
+        board_id=board_id,
+        name=policy_field(item, "board_name", str, label="board", required=False, aliases=("name",)) or "",
+        board_url=board_url,
+        description=policy_field(item, "description", str, label="board", required=False, nullable=True) or "",
+        icon_url=policy_field(item, "icon_url", str, label="board", required=False, nullable=True),
+        guide_prompt=policy_field(item, "guide_prompt", str, label="board", required=False, nullable=True),
         post_count=post_count,
-        categories=[_to_category(category) for category in raw_categories if isinstance(category, dict)],
+        categories=[_to_category(category) for category in raw_categories],
     )
 
 
@@ -1129,7 +1138,11 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
 async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = False) -> list[dict[str, Any]]:
     async def fetch() -> list[dict[str, Any]]:
         payload = await runtime.client.get_boards(token=agent_token)
-        return _read_boards_collection(payload)
+        boards = _read_boards_collection(payload)
+        # The cache must never retain an item the public read contract rejects.
+        for item in boards:
+            _to_board(item)
+        return boards
 
     return await load_boards_cached(agent_token, fetch, force_refresh=force_refresh)
 

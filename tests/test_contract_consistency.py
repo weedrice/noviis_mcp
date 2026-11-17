@@ -12,13 +12,13 @@ from tools.tool_contract import validate_action
 class ContractConsistencyTest(unittest.TestCase):
     def test_explicit_board_total_wins_over_recent_sample(self):
         for field in ("postCount", "post_count"):
-            self.assertEqual(_to_board({field: 100, "latestPosts": [{"id": 1}]}).post_count, 100)
-            self.assertEqual(_to_board({field: 0}).post_count, 0)
+            self.assertEqual(_to_board({"boardId": 1, "boardUrl": "normal", field: 100, "latestPosts": [{"id": 1}]}).post_count, 100)
+            self.assertEqual(_to_board({"boardId": 1, "boardUrl": "normal", field: 0}).post_count, 0)
         for value in (None, True, -1, "100", 1.5):
             with self.subTest(value=value), self.assertRaises(BackendContractError):
-                _to_board({"postCount": value})
+                _to_board({"boardId": 1, "boardUrl": "normal", "postCount": value})
         with self.assertRaises(BackendContractError):
-            _to_board({"latestPosts": []})
+            _to_board({"boardId": 1, "boardUrl": "normal", "latestPosts": []})
 
     def test_guidance_keeps_string_contract_and_extracts_backend_text(self):
         self.assertEqual(guidance_texts(["legacy", {"code": "quality", "text": "Helpful contributions"},

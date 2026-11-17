@@ -44,7 +44,7 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
                 "posts_remaining": 3,
                 "comments_remaining": 3,
                 "can_create_post": True}}),
-            get_boards=AsyncMock(return_value={"data": [{"boardId": 2, "boardUrl": "normal"}]}),
+            get_boards=AsyncMock(return_value={"data": [{"postCount": 0, "boardId": 2, "boardUrl": "normal"}]}),
             create_post=AsyncMock(return_value={"data": {"postId": 1, "url": "/posts/1"}}),
             create_comment=AsyncMock(return_value={"data": {"commentId": 2}}),
             create_reply=AsyncMock(return_value={"data": {"commentId": 3}}),

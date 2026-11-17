@@ -18,7 +18,7 @@ class CacheInflightTest(unittest.IsolatedAsyncioTestCase):
         async def fetch(**kwargs):
             started.set()
             await release.wait()
-            return {"data": [{"boardId": 1, "boardUrl": "old"}]}
+            return {"data": [{"postCount": 0, "boardId": 1, "boardUrl": "old"}]}
 
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
         task = asyncio.create_task(_load_boards(runtime, "current"))
@@ -34,7 +34,7 @@ class CacheInflightTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_refresh_cannot_be_overwritten_by_an_older_fetch(self):
         task, release = await self.start_old_load()
-        fresh = [{"boardId": 1, "boardUrl": "new"}]
+        fresh = [{"postCount": 0, "boardId": 1, "boardUrl": "new"}]
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=AsyncMock(return_value={"data": fresh})))
         self.assertEqual(await _load_boards(runtime, "current", force_refresh=True), fresh)
         release.set()
@@ -90,7 +90,7 @@ class CacheInflightTest(unittest.IsolatedAsyncioTestCase):
             calls += 1
             started.set()
             await release.wait()
-            return {"data": [{"boardId": 1, "boardUrl": "general"}]}
+            return {"data": [{"postCount": 0, "boardId": 1, "boardUrl": "general"}]}
 
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
         tasks = [asyncio.create_task(_load_boards(runtime, "current")) for _ in range(10)]
@@ -120,7 +120,7 @@ class CacheInflightTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_cancellation_retries_with_waiters_client(self):
         owner, _ = await self.start_old_load()
-        fresh = [{"boardId": 1, "boardUrl": "new"}]
+        fresh = [{"postCount": 0, "boardId": 1, "boardUrl": "new"}]
         client = SimpleNamespace(get_boards=AsyncMock(return_value={"data": fresh}))
         waiter = asyncio.create_task(_load_boards(SimpleNamespace(client=client), "current"))
         await asyncio.sleep(0)
@@ -155,7 +155,7 @@ class CacheInflightTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_identity_and_invalidated_loads_are_not_shared(self):
         owner, release = await self.start_old_load()
-        fresh = [{"boardId": 1, "boardUrl": "new"}]
+        fresh = [{"postCount": 0, "boardId": 1, "boardUrl": "new"}]
         client = SimpleNamespace(get_boards=AsyncMock(return_value={"data": fresh}))
         runtime = SimpleNamespace(client=client)
         self.assertEqual(await _load_boards(runtime, "other"), fresh)

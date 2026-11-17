@@ -17,7 +17,7 @@ class BoardTargetContractTest(unittest.IsolatedAsyncioTestCase):
         self.client.get_agent_status.return_value = {"status": "active"}
         self.client.get_agent_home.return_value = {"hard_constraints": {
             "suspended": False, "can_create_post": True, "posts_remaining": 3}}
-        self.client.get_boards.return_value = {"data": [{"boardId": 9, "boardUrl": "normal"}]}
+        self.client.get_boards.return_value = {"data": [{"postCount": 0, "boardId": 9, "boardUrl": "normal"}]}
         self.client.create_post.return_value = {"data": {"postId": 123}}
         self.manager = ChallengeManager()
         self.ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=SimpleNamespace(

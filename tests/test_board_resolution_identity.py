@@ -22,7 +22,7 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(clear_boards_cache)
 
     def test_only_board_identity_matches_not_numeric_or_named_slugs(self):
-        boards = [{"boardId": 1, "boardUrl": "7"}, {"board_id": 7, "board_url": "intended"}]
+        boards = [{"postCount": 0, "boardId": 1, "boardUrl": "7"}, {"postCount": 0, "board_id": 7, "board_url": "intended"}]
         for ordered in (boards, list(reversed(boards))):
             self.assertEqual(_find_board_url(ordered, "0007"), "intended")
         self.assertIsNone(_find_board_url(boards[:1], "7"))
@@ -38,7 +38,7 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
                 await _resolve_board_url(SimpleNamespace(client=client), value, "synthetic")
         client.get_boards.assert_not_awaited()
         self.assertEqual(_find_board_url([
-            {"boardId": 9223372036854775807, "boardUrl": "max"}], "0009223372036854775807"), "max")
+            {"postCount": 0, "boardId": 9223372036854775807, "boardUrl": "max"}], "0009223372036854775807"), "max")
 
     async def test_sdk_and_recommendations_reject_invalid_board_ids_before_authentication(self):
         client = AsyncMock()
@@ -68,30 +68,30 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(error)
 
     def test_malformed_ids_and_conflicting_identity_aliases_fail_closed(self):
-        for item in ({"boardId": value, "boardUrl": "target"} for value in
+        for item in ({"postCount": 0, "boardId": value, "boardUrl": "target"} for value in
                      (None, True, 7.0, "7", 0, -1, 9223372036854775808)):
             with self.subTest(item=item), self.assertRaises(BackendContractError):
                 _find_board_url([item], "7")
-        for item in ({"boardUrl": "7"}, {"boardId": 7, "board_id": 8, "boardUrl": "target"},
-                     {"boardId": 7, "board_id": "7", "boardUrl": "target"}):
+        for item in ({"boardUrl": "7"}, {"postCount": 0, "boardId": 7, "board_id": 8, "boardUrl": "target"},
+                     {"postCount": 0, "boardId": 7, "board_id": "7", "boardUrl": "target"}):
             with self.subTest(item=item), self.assertRaises(BackendContractError):
                 _find_board_url([item], "7")
 
     def test_matching_urls_must_be_valid_unambiguous_slugs(self):
         for value in (None, True, 7, [], {}, "", " ", "Target", "../target", "target/path", "a" * 101):
             with self.subTest(value=value), self.assertRaises(BackendContractError):
-                _find_board_url([{"boardId": 7, "boardUrl": value}], "7")
+                _find_board_url([{"postCount": 0, "boardId": 7, "boardUrl": value}], "7")
         for items in ([{"boardId": 7}],
-                      [{"boardId": 7, "boardUrl": "one", "board_url": "two"}],
-                      [{"boardId": 7, "boardUrl": "one"}, {"board_id": 7, "board_url": "two"}]):
+                      [{"postCount": 0, "boardId": 7, "boardUrl": "one", "board_url": "two"}],
+                      [{"postCount": 0, "boardId": 7, "boardUrl": "one"}, {"postCount": 0, "board_id": 7, "board_url": "two"}]):
             with self.subTest(items=items), self.assertRaises(BackendContractError):
                 _find_board_url(items, "7")
         self.assertEqual(_find_board_url([
-            {"boardId": 7, "board_id": 7, "boardUrl": "target", "board_url": "target"},
-            {"boardId": 7, "boardUrl": "target"}], "7"), "target")
+            {"postCount": 0, "boardId": 7, "board_id": 7, "boardUrl": "target", "board_url": "target"},
+            {"postCount": 0, "boardId": 7, "boardUrl": "target"}], "7"), "target")
 
     async def test_unknown_id_refreshes_cached_list_once_without_slug_fallback(self):
-        boards = [{"boardId": 1, "boardUrl": "7"}]
+        boards = [{"postCount": 0, "boardId": 1, "boardUrl": "7"}]
         client = AsyncMock()
         client.get_boards.return_value = {"data": boards}
         set_boards_cache(boards, agent_token="synthetic")
@@ -131,7 +131,7 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sdk_posts_to_identity_target_even_when_another_board_has_numeric_slug(self):
         requests = await self.run_creation([
-            {"boardId": 1, "boardUrl": "7"}, {"boardId": 7, "boardUrl": "intended"}], {"board_id": "0007"})
+            {"postCount": 0, "boardId": 1, "boardUrl": "7"}, {"postCount": 0, "boardId": 7, "boardUrl": "intended"}], {"board_id": "0007"})
         writes = [request for request in requests if request.method == "POST"]
         self.assertEqual(len(writes), 1)
         self.assertEqual(json.loads(writes[0].content)["boardUrl"], "intended")
@@ -147,9 +147,9 @@ class BoardResolutionIdentityTest(unittest.IsolatedAsyncioTestCase):
         client.get_agent_status.return_value = {"status": "active"}
         client.get_agent_home.return_value = {"hard_constraints": {
             "suspended": False, "can_create_post": True, "posts_remaining": 3}}
-        for boards in ([{"boardId": 1, "boardUrl": "7"}],
-                       [{"boardId": 7, "boardUrl": "one"}, {"boardId": 7, "boardUrl": "two"}],
-                       [{"boardId": "7", "boardUrl": "wrong"}]):
+        for boards in ([{"postCount": 0, "boardId": 1, "boardUrl": "7"}],
+                       [{"postCount": 0, "boardId": 7, "boardUrl": "one"}, {"postCount": 0, "boardId": 7, "boardUrl": "two"}],
+                       [{"postCount": 0, "boardId": "7", "boardUrl": "wrong"}]):
             clear_boards_cache()
             manager = ChallengeManager()
             client.get_boards.return_value = {"data": boards}

@@ -21,7 +21,7 @@ class BoardWriteFreshnessTest(unittest.IsolatedAsyncioTestCase):
 
     @asynccontextmanager
     async def backend(self, *, supported=False):
-        state = SimpleNamespace(boards=[{"boardId": 7, "boardUrl": "old"}], reads=0, writes=[], fail=False)
+        state = SimpleNamespace(boards=[{"postCount": 0, "boardId": 7, "boardUrl": "old"}], reads=0, writes=[], fail=False)
 
         def handler(request):
             if request.url.path.endswith("/home"):
@@ -63,7 +63,7 @@ class BoardWriteFreshnessTest(unittest.IsolatedAsyncioTestCase):
                 clear_boards_cache()
                 async with self.backend(supported=supported) as state:
                     issued = await self.call(state)
-                    state.boards = [{"boardId": 7, "boardUrl": "new"}, {"boardId": 8, "boardUrl": "old"}]
+                    state.boards = [{"postCount": 0, "boardId": 7, "boardUrl": "new"}, {"postCount": 0, "boardId": 8, "boardUrl": "old"}]
                     result = await self.call(state, issued=issued)
                     self.assertEqual((result.status, result.error, result.retryable), ("blocked", "challenge_context_mismatch", False))
                     self.assertIsNone(result.challenge)
@@ -74,8 +74,8 @@ class BoardWriteFreshnessTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_stale_cached_target_is_ignored_on_issuance_and_consumption(self):
         async with self.backend() as state:
-            state.boards = [{"boardId": 7, "boardUrl": "new"}, {"boardId": 8, "boardUrl": "old"}]
-            stale = [{"boardId": 7, "boardUrl": "old"}]
+            state.boards = [{"postCount": 0, "boardId": 7, "boardUrl": "new"}, {"postCount": 0, "boardId": 8, "boardUrl": "old"}]
+            stale = [{"postCount": 0, "boardId": 7, "boardUrl": "old"}]
             set_boards_cache(stale, agent_token="synthetic")
             issued = await self.call(state)
             set_boards_cache(stale, agent_token="synthetic")
@@ -113,7 +113,7 @@ class BoardWriteFreshnessTest(unittest.IsolatedAsyncioTestCase):
         async with self.backend() as state:
             issued = await self.call(state)
             await self.call(state, issued=issued)
-            state.boards = [{"boardId": 7, "boardUrl": "new"}]
+            state.boards = [{"postCount": 0, "boardId": 7, "boardUrl": "new"}]
             used = await self.call(state, issued=issued)
             self.assertEqual(used.error, "challenge_used")
             self.assertFalse(used.retryable)
