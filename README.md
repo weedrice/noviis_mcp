@@ -23,6 +23,12 @@ python main.py
 This repository includes a GitHub Actions workflow at `.github/workflows/deploy.yml`
 for deploying to a Linux WAS over SSH.
 
+CI also runs the complete regression suite and the in-process MCP initialization
+check on Windows Server 2022 / CPython 3.11 x64. `requirements-windows.lock` includes
+the shared dependency lock plus hashed Windows-only wheels. POSIX-only deployment
+tests run in the Linux job. Both platforms must pass before main can deploy;
+release artifacts are still built only on Linux.
+
 Deployment flow:
 
 1. On pull requests and main pushes, CI installs the hash-locked pip from `requirements-installer.lock`, then the locked build tools, and builds a portable application wheel. It creates a source/test/wheel archive, installs hash-locked dependencies into a fresh virtualenv, and runs all tests before publishing the archive.
@@ -31,7 +37,7 @@ Deployment flow:
 4. The file manifest and Python minimum version are checked. The server selects native wheels compatible with its Python/CPU/libc using `--require-hashes --only-binary=:all:` and the committed dependency lock. The application wheel is installed from the verified archive with `--no-index --no-deps`. `pip check` and a 30-second MCP initialization/tool-registration check must pass before shared production configuration/logs are attached. This check uses only synthetic settings and temporary logs, without backend requests or a listening port. Production import validation (also limited to 30 seconds) loads both dotenv files, requires the configured log directory to exist, and redirects validation logs to a temporary directory before importing the application. It never opens production log files as the deploy user. Validation finishes before an atomic `current` symlink switch and systemd restart. The full regression suite runs in CI, with a 180-second limit.
 5. MCP initialization, tool registration, and `get_agent_manifest` are checked with bounded readiness retries. The live application version and build commit must match the checksum-verified staged release; an old process or missing identity fails readiness. A restart/check failure restores the previous release (including the old root entry point on legacy installations), restarts it, checks recovery, and fails the deployment. Rollback compares the prior release's own verified identity when available. Only prior releases that predate build metadata use protocol-only recovery, with an explicit legacy warning; new deployments never use this fallback. A failed first installation stops the service.
 
-Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. Old releases are retained for inspection and recovery. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and enough directory traversal access to check that the configured log directory exists; it does not need write access to production logs. The service user needs read/execute access to releases and production configuration, plus write/execute access to the log directory and write access to existing log files. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
+Deployment takes an application-local file lock; Actions runs for main are serialized from build through activation and use unique remote archives. Immediately before upload, superseded revisions are skipped by comparing against current main; active deployments are never cancelled by a newer push. After successful readiness checks, generated release directories are pruned to `RELEASE_KEEP_COUNT` (default `5`, minimum `2`). The running release and the previous rollback target are always protected, even when older than the retained history. Unknown legacy directories and linked directories are never pruned. Failed deployments keep their release for diagnosis until a later successful deployment; cleanup failures warn without rolling back a healthy service. Set the GitHub repository variable `RELEASE_KEEP_COUNT`, or export it for manual deployments (it is not loaded from application dotenv files). CI removes its checksum-verified upload archive on script exit, including deployment failure. Manual deployments retain their archive unless `CLEANUP_ARCHIVE=1` is set; an archive that fails checksum verification is never removed. Existing root-based units continue through a small root `main.py` dispatcher, while new units use `current`. The deploy user needs write access to the app root and enough directory traversal access to check that the configured log directory exists; it does not need write access to production logs. The service user needs read/execute access to releases and production configuration, plus write/execute access to the log directory and write access to existing log files. Readiness defaults to `http://127.0.0.1:8001/mcp`; set `HEALTH_URL` when deploying with a different local port. This is a restart deployment with brief downtime. It does not perform backend or database migrations.
 
 Required GitHub repository secrets:
 
@@ -82,10 +88,21 @@ The server always loads `.env`, then `.env.local`, before selecting `NOVIIS_ENV`
 
 Use `.env.example` as the base template.
 
+Boolean settings (`LOG_JSON`, `NOVIIS_OPERATION_SUPPORT`) accept `true/false`,
+`yes/no`, `on/off`, or `1/0`, ignoring case and surrounding whitespace. Empty or
+unrecognized values fail startup. `MCP_SERVER_PORT` must be 1–65535 and
+`BOARDS_CACHE_TTL_SECONDS` must be a positive integer; zero does not disable caching.
+
 - `NOVIIS_API_BASE_URL`: backend API base URL, for example `https://noviis.kr/api/v1`
 - `NOVIIS_BASE_URL`: legacy alias for `NOVIIS_API_BASE_URL`; prefer `NOVIIS_API_BASE_URL` for new deployments
 - `NOVIIS_AGENT_INTERNAL_SECRET`: MCP-to-backend shared secret. This must match the backend `AGENT_INTERNAL_SECRET` from the same deployment secret set.
 - `BOARDS_CACHE_TTL_SECONDS`: board list cache TTL in seconds, defaults to `300`; entries are isolated by agent token, with a maximum of 256 cached identities
+
+Concurrent ordinary cache misses for the same agent share one board-list request.
+Each caller receives its own copy. Force refresh and invalidation detach older
+loads, preventing stale cache repopulation. A cancelled waiter does not cancel the
+fetch; if the fetch owner is cancelled, remaining callers retry with their own
+HTTP client and request deadline. No background fetch outlives its owning request.
 
 Production startup fails fast when `NOVIIS_API_BASE_URL` or `NOVIIS_AGENT_INTERNAL_SECRET`
 is missing. Every NoviIs API request made by this MCP client includes

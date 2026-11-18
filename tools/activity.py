@@ -14,7 +14,7 @@ from typing import Any
 from challenge import ChallengePrompt
 from mcp.server.fastmcp import Context, FastMCP
 
-from cache import begin_boards_load, finish_boards_load, clear_boards_cache, get_boards_cache, set_boards_cache
+from cache import clear_boards_cache, load_boards_cached
 from pydantic import StrictBool
 from config import INJECTION_WARNING
 from exceptions import BackendContractError, NoviIsAPIError
@@ -1127,18 +1127,11 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
 
 
 async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = False) -> list[dict[str, Any]]:
-    if force_refresh:
-        clear_boards_cache(agent_token)
-    boards = get_boards_cache(agent_token)
-    if boards is None:
-        ticket = begin_boards_load(agent_token)
-        try:
-            payload = await runtime.client.get_boards(token=agent_token)
-            boards = _read_boards_collection(payload)
-            set_boards_cache(boards, agent_token=agent_token, load_ticket=ticket)
-        finally:
-            finish_boards_load(ticket)
-    return boards
+    async def fetch() -> list[dict[str, Any]]:
+        payload = await runtime.client.get_boards(token=agent_token)
+        return _read_boards_collection(payload)
+
+    return await load_boards_cached(agent_token, fetch, force_refresh=force_refresh)
 
 
 async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_token: str) -> str:

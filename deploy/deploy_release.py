@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -142,19 +143,71 @@ def validate_production(release: Path, interpreter: Path, *, run=subprocess.run)
             check=True, cwd=release, env={**os.environ, "NOVIIS_ENV": "production"}, timeout=30)
 
 
+def _linked_directory(path: Path) -> bool:
+    # Windows junctions are reparse points but are not symlinks on Python 3.11.
+    return path.is_symlink() or bool(getattr(path.lstat(), "st_file_attributes", 0)
+                                    & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def release_root(app: Path) -> Path:
+    root = app / "releases"
+    if root.exists() or root.is_symlink():
+        if _linked_directory(root) or root.resolve() != root or not root.is_dir():
+            raise ValueError("releases must be a real directory directly inside the application")
+    return root
+
+
+def prune_releases(app: Path, *, protected: tuple[Path, ...], keep: int) -> None:
+    """Keep recent generated releases and always protect current/rollback targets.
+
+    Only direct, real directories with our generated names are eligible. Shared
+    config/log symlinks inside old releases are unlinked, never traversed.
+    Unknown legacy directories remain available for manual inspection.
+    """
+    if type(keep) is not int or keep < 2:
+        raise ValueError("RELEASE_KEEP_COUNT must be an integer of at least 2")
+    app = app.resolve()
+    root = release_root(app)
+    protected_paths = {path.resolve() for path in protected}
+    current = app / "current"
+    if current.is_symlink():
+        protected_paths.add(current.resolve())
+    candidates = []
+    for path in root.iterdir():
+        if (re.fullmatch(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{12}", path.name)
+                and not _linked_directory(path) and path.is_dir()
+                and path.resolve().parent == root):
+            candidates.append(path)
+    candidates.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+    retained = {path for path in candidates if path in protected_paths}
+    for path in candidates:
+        if len(retained) >= keep:
+            break
+        retained.add(path)
+    for path in candidates:
+        if path not in retained:
+            # Recheck the deletion boundary immediately before recursive removal.
+            if _linked_directory(path) or path.resolve().parent != root:
+                raise ValueError("Release cleanup target escaped the releases directory")
+            shutil.rmtree(path)
+
+
 def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subprocess.run,
-           smoke=smoke_check, switch=activate, python=sys.executable) -> Path:
+           smoke=smoke_check, switch=activate, python=sys.executable, keep_releases: int = 5) -> Path:
     app = app.resolve()
     if app == Path(app.anchor) or not archive.is_file() or not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", service):
         raise ValueError("Invalid deployment target, archive, or service")
+    if type(keep_releases) is not int or keep_releases < 2:
+        raise ValueError("RELEASE_KEEP_COUNT must be an integer of at least 2")
     app.mkdir(parents=True, exist_ok=True)
+    releases = release_root(app)
     current = app / "current"
     if current.exists() and not current.is_symlink():
         raise ValueError("current must be a release symlink")
     previous = current.resolve() if current.is_symlink() else None
     if previous is not None and not previous.is_relative_to(app / "releases"):
         raise ValueError("Previous release is outside this application's releases directory")
-    release = app / "releases" / (time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
+    release = releases / (time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:12])
     release.mkdir(parents=True)
     extract_release(archive, release)
     manifest = verify_release(release)
@@ -210,6 +263,13 @@ def deploy(app: Path, archive: Path, service: str, health_url: str, *, run=subpr
             else:
                 run(command + ["stop", service], check=True)
         raise
+    # Cleanup is maintenance after successful health checks, never a rollback
+    # trigger. On failure keep all evidence until a later successful deployment.
+    try:
+        prune_releases(app, protected=(release,) + ((previous,) if previous is not None else ()),
+                       keep=keep_releases)
+    except (OSError, ValueError) as exc:
+        print(f"Warning: release retention cleanup failed: {exc}", file=sys.stderr)
     return release
 
 
@@ -223,7 +283,8 @@ def main() -> None:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         release = deploy(app, Path(os.environ.get("ARCHIVE_PATH", "/tmp/noviis-mcp-release.tgz")),
                          os.environ.get("SERVICE_NAME", "noviis-mcp.service"),
-                         os.environ.get("HEALTH_URL", "http://127.0.0.1:8001/mcp"))
+                         os.environ.get("HEALTH_URL", "http://127.0.0.1:8001/mcp"),
+                         keep_releases=int(os.environ.get("RELEASE_KEEP_COUNT", "5")))
         print("Activated release:", release.name)
 
 

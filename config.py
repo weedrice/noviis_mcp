@@ -57,11 +57,19 @@ def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean (true/false, yes/no, on/off, 1/0)")
 
 
 def _positive_int(name: str, default: int) -> int:
-    value = int(_env_optional(name, str(default)))
+    try:
+        value = int(_env_optional(name, str(default)))
+    except ValueError:
+        raise ValueError(f"{name} must be a positive integer") from None
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
@@ -73,7 +81,9 @@ NOVIIS_AGENT_INTERNAL_SECRET = _env("NOVIIS_AGENT_INTERNAL_SECRET")
 AGENT_API_PREFIX = "/agents"
 MCP_SERVER_HOST = _env("MCP_SERVER_HOST")
 MCP_SERVER_PORT = int(_env("MCP_SERVER_PORT"))
-BOARDS_CACHE_TTL_SECONDS = int(_env_optional("BOARDS_CACHE_TTL_SECONDS", "300"))
+if not 1 <= MCP_SERVER_PORT <= 65535:
+    raise ValueError("MCP_SERVER_PORT must be between 1 and 65535")
+BOARDS_CACHE_TTL_SECONDS = _positive_int("BOARDS_CACHE_TTL_SECONDS", 300)
 LOG_LEVEL = _env("LOG_LEVEL").upper()
 LOG_DIR = Path(_env_optional("LOG_DIR", _DEV_DEFAULTS["LOG_DIR"])).resolve()
 LOG_JSON = _env_bool("LOG_JSON", True)
