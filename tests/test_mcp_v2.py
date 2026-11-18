@@ -67,6 +67,37 @@ class ModernProtocolTest(unittest.TestCase):
         self.fixture.session = lambda: dict(MODERN_HEADERS)
         self.fixture.test_timeout_closes_backend_client_and_consumed_challenge_cannot_replay()
 
+    def test_payload_limit_returns_private_actionable_error_without_allocating_challenge(self):
+        fixture = self.fixture
+        content = "비공개본문" * 10
+        for headers in (fixture.session(), MODERN_HEADERS):
+            with self.subTest(protocol=sessions.protocol_version(headers)), \
+                    patch("challenge.CHALLENGE_MAX_PAYLOAD_BYTES", 64):
+                result = fixture.call(headers, content=content)
+                self.assertTrue(result["isError"])
+                self.assertIn("Challenge payload must be at most 64 UTF-8 bytes.", result["content"][0]["text"])
+                self.assertNotIn(content, str(result))
+                self.assertEqual(fixture.managers[0]._challenges, {})
+                self.assertEqual(fixture.managers[0]._owners, {})
+                self.assertEqual(fixture.writes, [])
+
+    def test_payload_limit_during_verification_preserves_pending_challenge(self):
+        fixture = self.fixture
+        for headers in (fixture.session(), MODERN_HEADERS):
+            with self.subTest(protocol=sessions.protocol_version(headers)):
+                issued = fixture.structured(headers)
+                challenge_id = issued["challenge"]["challenge_id"]
+                answer = {"challenge_id": challenge_id, "answer": "2.00"}
+                writes_before = len(fixture.writes)
+                with patch("challenge.CHALLENGE_MAX_PAYLOAD_BYTES", 64):
+                    result = fixture.call(headers, **answer)
+                self.assertTrue(result["isError"])
+                self.assertIn("Challenge payload must be at most 64 UTF-8 bytes.", result["content"][0]["text"])
+                self.assertEqual(len(fixture.writes), writes_before)
+                self.assertEqual(fixture.managers[0]._challenges[challenge_id].status, "pending")
+                self.assertEqual(fixture.structured(headers, **answer)["status"], "created")
+                self.assertEqual(len(fixture.writes), writes_before + 1)
+
     def test_unexpected_value_error_does_not_become_public_tool_guidance(self):
         def broken_backend(request):
             raise ValueError("opaque-private-crash-value")
