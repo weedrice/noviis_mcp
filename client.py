@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 import zlib
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -13,7 +14,7 @@ from typing import Any
 import httpx
 import anyio
 from cache import clear_boards_cache
-from logging_utils import sanitize_error_data
+from logging_utils import sanitize_error_data, safe_log_params, request_log_context, RequestLogContext
 
 from config import (
     AGENT_API_PREFIX,
@@ -84,7 +85,47 @@ class NoviIsClient:
         files: Mapping[str, Any] | None = None,
         operation_id: str | None = None,
     ) -> dict[str, Any]:
+        context = request_log_context.get()
+        context_token = None
+        if context is None:
+            context = RequestLogContext()
+            context_token = request_log_context.set(context)
+        if params and isinstance(params.get("q"), str) and params["q"]:
+            context.private_values.add(params["q"])
+        started = time.perf_counter()
+        trace = {"attempts": 0, "status_code": None, "outcome": "error"}
+        try:
+            result = await self._request_json(method, path, token=token, params=params,
+                                              json_body=json_body, files=files,
+                                              operation_id=operation_id, trace=trace)
+            trace["outcome"] = "success"
+            return result
+        except BaseException as exc:
+            if isinstance(exc, anyio.get_cancelled_exc_class()):
+                trace["outcome"] = "cancelled"
+            elif isinstance(exc, BackendContractError):
+                trace["outcome"] = "contract_error"
+            elif isinstance(exc, ValueError):
+                trace["outcome"] = "invalid_input"
+            raise
+        finally:
+            try:
+                logger.info("noviis_api_complete", extra={
+                    "http_method": method.upper(), "path": path.split("?", 1)[0].split("#", 1)[0],
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3), **trace,
+                })
+            finally:
+                if context_token is not None:
+                    request_log_context.reset(context_token)
+
+    async def _request_json(
+        self, method: str, path: str, *, token: str | None,
+        params: Mapping[str, Any] | None, json_body: Mapping[str, Any] | None,
+        files: Mapping[str, Any] | None, operation_id: str | None, trace: dict[str, Any],
+    ) -> dict[str, Any]:
         headers = self._build_headers(token)
+        log_path = path.split("?", 1)[0].split("#", 1)[0]
+        headers["X-Request-ID"] = request_log_context.get().request_id
         error_secrets = (self._internal_secret, token)
         if operation_id is not None:
             headers["Idempotency-Key"] = _operation_id(operation_id)
@@ -96,15 +137,19 @@ class NoviIsClient:
         while True:
             remaining = min(deadline, anyio.current_effective_deadline()) - anyio.current_time()
             if remaining <= 0:
+                trace["outcome"] = "timeout"
                 raise ServerError("NoviIs API request deadline exhausted; no further request was sent.")
+            trace["attempts"] += 1
+            trace["status_code"] = None
             try:
                 logger.info(
                     "noviis_api_request",
                     extra={
                         "http_method": method.upper(),
-                        "path": path,
+                        "path": log_path,
                         "token": mask_token(token),
-                        "params": dict(params) if params else None,
+                        "params": safe_log_params(params),
+                        "attempt": trace["attempts"],
                     },
                 )
                 # Bound the whole HTTP attempt, not only individual httpx phases.
@@ -119,6 +164,8 @@ class NoviIsClient:
                         json=json_body,
                         files=files,
                     )
+                    trace["status_code"] = response.status_code
+                    trace["outcome"] = "http_error" if response.status_code >= 300 else "error"
                     payload = self._parse_json(
                         response, strict=200 <= response.status_code < 300,
                         allow_empty=response.status_code == 204 and method.upper() == "DELETE",
@@ -128,11 +175,13 @@ class NoviIsClient:
                     if anyio.current_time() >= min(deadline, anyio.current_effective_deadline()):
                         raise TimeoutError
             except TimeoutError as exc:
+                trace["outcome"] = "timeout"
                 message = "NoviIs API request deadline exhausted."
                 if not safe_to_retry:
                     message += " Write outcome is unknown; inspect activity before retrying."
                 raise ServerError(message) from None
             except httpx.HTTPError as exc:
+                trace["outcome"] = "timeout" if isinstance(exc, httpx.TimeoutException) else "transport_error"
                 message = "NoviIs API request failed: " + sanitize_error_data(str(exc), known_secrets=error_secrets)
                 if not safe_to_retry:
                     message += " Write outcome is unknown; inspect activity before retrying."
@@ -143,7 +192,7 @@ class NoviIsClient:
                     "noviis_api_response",
                     extra={
                         "http_method": method.upper(),
-                        "path": path,
+                        "path": log_path,
                         "status_code": response.status_code,
                         "token": mask_token(token),
                     },
@@ -159,7 +208,7 @@ class NoviIsClient:
                     "noviis_api_unauthorized",
                     extra={
                         "http_method": method.upper(),
-                        "path": path,
+                        "path": log_path,
                         "status_code": response.status_code,
                         "token": mask_token(token),
                     },
@@ -171,7 +220,7 @@ class NoviIsClient:
                     "noviis_api_forbidden",
                     extra={
                         "http_method": method.upper(),
-                        "path": path,
+                        "path": log_path,
                         "status_code": response.status_code,
                         "token": mask_token(token),
                         "response_status": sanitize_error_data(payload.get("status"), known_secrets=error_secrets),
@@ -218,7 +267,7 @@ class NoviIsClient:
                         "noviis_api_server_error",
                         extra={
                             "http_method": method.upper(),
-                            "path": path,
+                            "path": log_path,
                             "status_code": response.status_code,
                             "token": mask_token(token),
                         },
@@ -243,7 +292,7 @@ class NoviIsClient:
                     "noviis_api_server_error_retry",
                     extra={
                         "http_method": method.upper(),
-                        "path": path,
+                        "path": log_path,
                         "token": mask_token(token),
                         "wait_seconds": SERVER_ERROR_WAIT,
                         "status_code": response.status_code,
@@ -265,7 +314,7 @@ class NoviIsClient:
                 "noviis_api_unhandled_status",
                 extra={
                     "http_method": method.upper(),
-                    "path": path,
+                    "path": log_path,
                     "status_code": response.status_code,
                     "token": mask_token(token),
                 },

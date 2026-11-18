@@ -99,7 +99,7 @@ with patch('logging_utils.configure_logging'), patch('mcp.server.fastmcp.server.
     from main import PIDLock
 lock = PIDLock(sys.argv[1])
 lock.acquire()
-print('locked', flush=True)
+print(f'locked {os.getpid()}', flush=True)
 sys.stdin.readline()
 os._exit(0)
 """
@@ -110,9 +110,13 @@ os._exit(0)
         reader = threading.Thread(target=lambda: ready.put(child.stdout.readline()), daemon=True)
         reader.start()
         try:
-            self.assertEqual(ready.get(timeout=20).strip(), "locked")
+            state, owner_pid = ready.get(timeout=20).strip().split()
+            self.assertEqual(state, "locked")
+            self.assertGreater(int(owner_pid), 0)
+            # Windows venv launchers can have a different PID from the Python
+            # process that owns the OS lock. Use the owner's reported identity.
             contender = self.lock()
-            with self.assertRaisesRegex(DuplicateInstanceError, f"PID {child.pid}"):
+            with self.assertRaisesRegex(DuplicateInstanceError, f"PID {owner_pid}"):
                 contender.acquire()
         finally:
             # Only this test child is controlled, through its cooperative stdin

@@ -1,4 +1,4 @@
 # Bootstrap the same resolver in CI and every release virtualenv.
-# Wheel SHA-256 from https://pypi.org/pypi/pip/26.2.1/json
-pip==26.2.1 \
-    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
+# Wheel SHA-256 from https://pypi.org/pypi/pip/26.3/json
+pip==26.3 \
+    --hash=sha256:f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13

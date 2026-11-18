@@ -6,5 +6,5 @@ colorama==0.4.6 ; sys_platform == "win32" \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
 
 # MCP's native Windows dependency (cp311-win_amd64 wheel).
-pywin32==311 ; sys_platform == "win32" \
-    --hash=sha256:3ce80b34b22b17ccbd937a6e78e7225d80c52f5ab9940fe0506a1a16f3dab503
+pywin32==312 ; sys_platform == "win32" \
+    --hash=sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a

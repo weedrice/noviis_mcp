@@ -389,6 +389,23 @@ class MCPSessionTest(unittest.TestCase):
         self.assertEqual(self.status_calls, 0)
         self.assertEqual(self.managers[0]._challenges, {})
 
+    def test_sdk_body_limit_preserves_configured_large_request_support(self):
+        # The updated SDK defaults to 4 MiB, below our image-upload allowance.
+        # JSON whitespace exercises the real transport without a backend write.
+        body = b" " * (4 * 1024 * 1024) + b'{"jsonrpc":"2.0","id":900,"method":"tools/list","params":{}}'
+        headers = {**self.session(), "Content-Type": "application/json"}
+        response = self.http.post("/mcp", headers=headers, content=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("tools", response.json()["result"])
+
+        with patch.object(main, "MCP_MAX_REQUEST_BYTES", len(body) - 1):
+            with TestClient(main.create_app(), base_url="http://127.0.0.1:8001") as http:
+                before = len(self.clients)
+                rejected = http.post("/mcp", headers=headers, content=body)
+                self.assertEqual(rejected.status_code, 413)
+                self.assertEqual(len(self.clients), before)
+        self.assertEqual(self.backend_requests, [])
+
     def test_malformed_backend_write_response_is_not_success(self):
         session = self.session()
         issued = self.structured(session)
