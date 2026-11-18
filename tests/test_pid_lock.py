@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-with patch("logging_utils.configure_logging"), patch("mcp.server.fastmcp.server.configure_logging"):
+with patch("logging_utils.configure_logging"), patch("mcp.server.mcpserver.server.configure_logging"):
     from main import PIDLock
 from exceptions import DuplicateInstanceError
 
@@ -95,7 +95,7 @@ class PIDLockTest(unittest.TestCase):
         script = """
 import os, sys
 from unittest.mock import patch
-with patch('logging_utils.configure_logging'), patch('mcp.server.fastmcp.server.configure_logging'):
+with patch('logging_utils.configure_logging'), patch('mcp.server.mcpserver.server.configure_logging'):
     from main import PIDLock
 lock = PIDLock(sys.argv[1])
 lock.acquire()

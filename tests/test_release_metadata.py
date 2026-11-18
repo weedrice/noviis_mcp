@@ -10,7 +10,7 @@ from unittest.mock import patch
 from starlette.testclient import TestClient
 from tools import version
 
-with patch("logging_utils.configure_logging"), patch("mcp.server.fastmcp.server.configure_logging"):
+with patch("logging_utils.configure_logging"), patch("mcp.server.mcpserver.server.configure_logging"):
     import main
 
 

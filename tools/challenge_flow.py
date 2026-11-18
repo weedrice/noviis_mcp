@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 from collections.abc import Callable
 from typing import Any, TypeVar
 from uuid import uuid4
@@ -26,7 +28,7 @@ _Result = TypeVar("_Result")
 async def authenticate_write(runtime: Any, agent_token: str) -> None:
     """Check current identity before allocating or mutating any challenge state."""
     if not agent_token.strip() or len(agent_token) > 4096:
-        raise ValueError("agent_token must be nonempty and at most 4096 characters.")
+        raise ToolInputError("agent_token must be nonempty and at most 4096 characters.")
     data = unwrap_dict_data(await runtime.client.get_agent_status(token=agent_token))
     status = data.get("status")
     if not isinstance(status, str) or not status:
@@ -39,7 +41,7 @@ async def authenticate_write(runtime: Any, agent_token: str) -> None:
 
 def require_challenge_pair(challenge_id: str | None, answer: str | None) -> None:
     if (challenge_id is None) != (answer is None):
-        raise ValueError("challenge_id and answer must be provided together")
+        raise ToolInputError("challenge_id and answer must be provided together")
 
 
 def recovery_response_operation_id(

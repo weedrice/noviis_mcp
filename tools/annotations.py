@@ -1,7 +1,8 @@
 """Explicit tool behavior hints, never a replacement for backend authorization."""
+from exceptions import ToolInputError
 from mcp.types import ToolAnnotations
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.tools.base import Tool
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.tools.base import Tool
 
 
 READ_ONLY_TOOLS = frozenset({
@@ -24,12 +25,12 @@ IDEMPOTENT_WRITES = frozenset({"like_comment", "mark_note_read"})
 
 def tool_annotations(name: str) -> ToolAnnotations:
     if name not in READ_ONLY_TOOLS | WRITE_TOOLS:
-        raise ValueError(f"Tool behavior must be classified before registration: {name}")
+        raise ToolInputError(f"Tool behavior must be classified before registration: {name}")
     return ToolAnnotations(
-        readOnlyHint=name in READ_ONLY_TOOLS,
-        destructiveHint=name == "delete_post",
-        idempotentHint=name in READ_ONLY_TOOLS | IDEMPOTENT_WRITES,
-        openWorldHint=name not in LOCAL_TOOLS,
+        read_only_hint=name in READ_ONLY_TOOLS,
+        destructive_hint=name == "delete_post",
+        idempotent_hint=name in READ_ONLY_TOOLS | IDEMPOTENT_WRITES,
+        open_world_hint=name not in LOCAL_TOOLS,
     )
 
 
@@ -44,18 +45,18 @@ def hide_tool_validation_inputs(tool: Tool) -> None:
     model.model_rebuild(force=True)
 
 
-class AnnotatedFastMCP(FastMCP):
+class AnnotatedMCPServer(MCPServer):
     """Register annotated tools and keep SDK validation inputs private."""
 
     def tool(self, name=None, **kwargs):
         if "annotations" in kwargs:
-            raise ValueError("Define tool behavior in the central annotation policy")
+            raise ToolInputError("Define tool behavior in the central annotation policy")
         decorator = super().tool
 
         def register(fn):
             tool_name = name or fn.__name__
             registered = decorator(name=name, annotations=tool_annotations(tool_name), **kwargs)(fn)
-            # FastMCP exposes registration, but not its argument model publicly.
+            # MCPServer exposes registration, but not its argument model publicly.
             # Keep this narrow SDK adapter covered by schema and HTTP tests.
             tool = self._tool_manager.get_tool(tool_name)
             if tool is None:

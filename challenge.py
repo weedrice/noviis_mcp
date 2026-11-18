@@ -33,6 +33,7 @@ from exceptions import (
     ChallengeSuspended,
     ChallengeUnknown,
     ChallengeUsed,
+    ToolInputError,
 )
 
 
@@ -302,7 +303,7 @@ def _operation_metadata(value: Any) -> str | None:
 def _payload_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(encoded) > CHALLENGE_MAX_PAYLOAD_BYTES:
-        raise ValueError(f"Challenge payload must be at most {CHALLENGE_MAX_PAYLOAD_BYTES} UTF-8 bytes.")
+        raise ToolInputError(f"Challenge payload must be at most {CHALLENGE_MAX_PAYLOAD_BYTES} UTF-8 bytes.")
     return hashlib.sha256(encoded).hexdigest()
 
 

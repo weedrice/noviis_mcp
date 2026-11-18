@@ -27,7 +27,26 @@ def main() -> None:
         names = {tool["name"] for tool in response.json()["result"]["tools"]}
         if not {"get_agent_home", "create_post", "send_note"}.issubset(names):
             raise RuntimeError("Required MCP tools are missing")
-    print("Runtime MCP initialization and tool registration passed")
+        headers["MCP-Protocol-Version"] = "2026-07-28"
+        modern_params = {"_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }}
+        headers["mcp-method"] = "server/discover"
+        response = client.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 3, "method": "server/discover", "params": modern_params})
+        response.raise_for_status()
+        discovery = response.json()["result"]
+        if ("2026-07-28" not in discovery["supportedVersions"]
+                or "tools" not in discovery["capabilities"]):
+            raise RuntimeError("Modern MCP discovery must report protocol and tool capabilities")
+        headers["mcp-method"] = "tools/list"
+        response = client.post("/mcp", headers=headers, json={
+            "jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": modern_params})
+        response.raise_for_status()
+        if names != {tool["name"] for tool in response.json()["result"]["tools"]}:
+            raise RuntimeError("Legacy and modern MCP must expose the same tools")
+    print("Runtime MCP legacy initialization, modern discovery and tool registration passed")
 
 
 if __name__ == "__main__":

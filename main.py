@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import atexit
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, AsyncIterator
+from dataclasses import dataclass, replace
+from typing import Any
 
 import uvicorn
-from tools.annotations import AnnotatedFastMCP
+from tools.annotations import AnnotatedMCPServer
 import anyio
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.context import ServerRequestContext, CallNext
+from mcp.server.transport_security import TransportSecuritySettings
 
 from challenge import ChallengeManager
 from client import NoviIsClient
@@ -45,41 +46,33 @@ class AppRuntime:
 pid_lock = PIDLock(LOCK_FILE_PATH)
 
 
-def create_mcp_server() -> FastMCP:
-    # Stateless HTTP creates a runtime per request; challenge state belongs to
-    # the server instance so verification and limits survive HTTP reconnects.
+def create_mcp_server() -> MCPServer:
+    # SDK 2.x lifespans are server-wide. Only challenge state is shared;
+    # backend clients and cancellation scopes belong to individual messages.
     challenge_manager = ChallengeManager()
 
-    @asynccontextmanager
-    async def mcp_lifespan(_: FastMCP) -> AsyncIterator[AppRuntime]:
+    async def request_runtime(ctx: ServerRequestContext, call_next: CallNext):
         lifetime = current_request.get()
         with anyio.CancelScope(deadline=lifetime.deadline if lifetime is not None else float("inf")) as scope:
             if lifetime is not None:
                 lifetime.cancel = scope.cancel
             client = NoviIsClient()
             try:
-                yield AppRuntime(client=client, challenge_manager=challenge_manager)
+                return await call_next(replace(ctx, lifespan_context=AppRuntime(
+                    client=client, challenge_manager=challenge_manager)))
             finally:
                 with anyio.move_on_after(5, shield=True):
                     await client.aclose()
+                if lifetime is not None:
+                    lifetime.cancel = None
 
-    mcp = AnnotatedFastMCP(
+    mcp = AnnotatedMCPServer(
         name="NoviIs Agent MCP Server",
+        version=package_version(),
         instructions=MCP_SERVER_INSTRUCTIONS,
         log_level=LOG_LEVEL,
-        host=MCP_SERVER_HOST,
-        port=MCP_SERVER_PORT,
-        streamable_http_path="/mcp",
-        json_response=True,
-        stateless_http=True,
-        # Keep the SDK's body cap aligned with our pre-parsing middleware;
-        # its 4 MiB default is smaller than supported image-upload requests.
-        max_request_body_size=MCP_MAX_REQUEST_BYTES,
-        lifespan=mcp_lifespan,
+        middleware=[request_runtime],
     )
-    # FastMCP 1.x does not expose a version constructor argument. Keep this
-    # narrow SDK adapter covered by the protocol initialization smoke test.
-    mcp._mcp_server.version = package_version()
     register_auth_tools(mcp)
     register_guide_tools(mcp)
     register_manifest_tools(mcp)
@@ -94,10 +87,21 @@ def create_mcp_server() -> FastMCP:
 
 def create_app() -> Any:
     mcp = create_mcp_server()
-    application = mcp.streamable_http_app()
+    security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    if MCP_SERVER_HOST in ("127.0.0.1", "localhost", "::1"):
+        security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+        )
+    application = mcp.streamable_http_app(
+        streamable_http_path="/mcp", json_response=True, stateless_http=True,
+        host=MCP_SERVER_HOST, transport_security=security,
+        max_request_body_size=MCP_MAX_REQUEST_BYTES,
+    )
     application.add_middleware(
         RequestSizeLimitMiddleware, max_body_bytes=MCP_MAX_REQUEST_BYTES,
-        rpc_path=mcp.settings.streamable_http_path, transport_security=mcp.settings.transport_security,
+        rpc_path="/mcp", transport_security=security,
     )
     application.add_middleware(
         RequestLimitMiddleware, max_concurrent=MCP_MAX_CONCURRENT_REQUESTS,

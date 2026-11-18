@@ -11,7 +11,7 @@ import time
 
 import anyio
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
-from mcp.types import INVALID_PARAMS, JSONRPCMessage
+from mcp.types import INVALID_PARAMS, jsonrpc_message_adapter
 from pydantic import ValidationError
 from starlette._utils import get_route_path
 from starlette.requests import Request
@@ -129,7 +129,7 @@ class RequestLimitMiddleware:
             with anyio.move_on_after(self.timeout_seconds) as deadline:
                 # SDK tasks run in its application task group, outside this
                 # cancel scope. ContextVar inheritance carries the absolute
-                # deadline, including body-read time, into the SDK lifespan.
+                # deadline, including body-read time, into the SDK middleware.
                 lifetime.deadline = anyio.current_effective_deadline()
                 await self.app(scope, receive, track_send)
             if deadline.cancel_called:
@@ -145,7 +145,7 @@ class RequestLimitMiddleware:
                         await send({"type": "http.response.body", "body": b"", "more_body": False})
         finally:
             # SDK server tasks live in its application task group. Explicitly
-            # cancel this request's lifespan even on disconnect or timeout.
+            # cancel this request's runtime even on disconnect or timeout.
             if lifetime.cancel is not None:
                 lifetime.cancel()
             current_request.reset(token)
@@ -217,7 +217,7 @@ class RequestSizeLimitMiddleware:
             # Keep the SDK's existing JSON syntax/encoding error behavior.
             return False
         try:
-            JSONRPCMessage.model_validate(raw_message)
+            jsonrpc_message_adapter.validate_python(raw_message)
         except ValidationError:
             pass
         else:

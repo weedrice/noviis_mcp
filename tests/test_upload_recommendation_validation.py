@@ -6,7 +6,7 @@ import unittest
 import httpx
 from client import NoviIsClient
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from test_backend_input_contract import setup_context
 from tools.home import _to_opportunity_actions

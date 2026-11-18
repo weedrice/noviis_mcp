@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from exceptions import BackendContractError
 from tools.notes import build_note_thread_result, build_notes_result

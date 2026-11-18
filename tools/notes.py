@@ -10,7 +10,7 @@ from functools import partial
 from typing import Any
 
 from challenge import ChallengePrompt
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from exceptions import BackendContractError, NoviIsAPIError
 from tools.challenge_flow import (
@@ -113,7 +113,7 @@ class MarkNoteReadResult:
     observed_boundary_applied: bool = False
 
 
-def register_note_tools(mcp: FastMCP) -> None:
+def register_note_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_notes(
         ctx: Context,

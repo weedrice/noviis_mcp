@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 import httpx
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from challenge import ChallengeManager
 from client import NoviIsClient

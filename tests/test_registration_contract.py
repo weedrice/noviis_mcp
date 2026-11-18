@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 import httpx
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from client import NoviIsClient
 from tools.tool_contract import tool_contracts, validate_action

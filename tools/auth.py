@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from exceptions import BackendContractError
 from tools.status_contract import (policy_field, policy_object, validate_policy_permission, validate_policy_quota)
@@ -64,7 +64,7 @@ class AgentStatusResult:
     rate_limit: RateLimitInfo | None = None
 
 
-def register_auth_tools(mcp: FastMCP) -> None:
+def register_auth_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def register_agent(ctx: Context, description: str, name: str | None = None) -> RegisterAgentResult:
         """

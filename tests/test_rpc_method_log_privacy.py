@@ -60,8 +60,10 @@ class RPCMethodLogPrivacyTest(unittest.TestCase):
                     self.assertEqual(response.json()["error"]["code"], -32602)
                     self.assertNotIn(SYNTHETIC_CREDENTIAL, response.text)
                     log = output.getvalue()
-                    self.assertIn("Failed to validate request: input omitted.", log)
-                    self.assertIn("Message that failed validation: input omitted.", log)
+                    # SDK 2.x returns a sanitized protocol error without logging
+                    # the rejected request; our completion event remains visible.
+                    self.assertIn("mcp_request_complete", log)
+                    self.assertEqual(response.json()["error"]["message"], "Invalid request parameters")
                     self.assertNotIn(SYNTHETIC_CREDENTIAL, log)
                     self.assertNotIn("input_value", log)
         self.assertEqual(self.fixture.backend_requests, [])
@@ -80,7 +82,7 @@ class RPCMethodLogPrivacyTest(unittest.TestCase):
                     self.assertEqual(response.status_code, 202)
                     self.assertEqual(response.content, b"")
                     log = output.getvalue()
-                    self.assertIn("Failed to validate notification: input omitted.", log)
+                    self.assertIn("malformed params", log)
                     self.assertNotIn(SYNTHETIC_CREDENTIAL, log)
                     self.assertNotIn("input_value", log)
         self.assertEqual(self.fixture.backend_requests, [])
@@ -105,7 +107,7 @@ class RPCMethodLogPrivacyTest(unittest.TestCase):
             self.assertIn("ordinary runtime diagnostic", output.getvalue())
             self.assertIn("noviis_api_response", output.getvalue())
 
-    def test_source_adapter_does_not_replace_unrelated_messages(self):
+    def test_filter_preserves_ordinary_diagnostics(self):
         filter_ = SensitiveDataFilter()
         for pathname, function, message in (
             ("application/session.py", "_receive_loop", "Failed to validate request: ordinary diagnostic"),

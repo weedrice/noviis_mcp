@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from cache import clear_boards_cache, get_boards_cache, set_boards_cache
 from challenge import ChallengeManager

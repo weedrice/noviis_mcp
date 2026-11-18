@@ -1,10 +1,12 @@
 """Resolve per-call credentials without storing an agent identity on the server."""
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 import hmac
 import re
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from tools.input_validation import validate_tool_inputs
 
@@ -21,15 +23,15 @@ def resolve_agent_token(ctx: Context, agent_token: str | None, *, required: bool
     header_token = None
     if headers:
         if len(headers) != 1:
-            raise ValueError("Send exactly one Authorization header.")
+            raise ToolInputError("Send exactly one Authorization header.")
         match = re.fullmatch(r"Bearer +([A-Za-z0-9._~+/-]+=*)", headers[0], re.IGNORECASE | re.ASCII)
         if match is None or len(match[1]) > 4096:
-            raise ValueError("Authorization must contain one Bearer agent token of at most 4096 characters.")
+            raise ToolInputError("Authorization must contain one Bearer agent token of at most 4096 characters.")
         header_token = match[1]
     if header_token is not None and agent_token is not None:
         if not hmac.compare_digest(header_token.encode("utf-8"), agent_token.encode("utf-8")):
-            raise ValueError("Authorization and agent_token identify different credentials; supply only one or matching values.")
+            raise ToolInputError("Authorization and agent_token identify different credentials; supply only one or matching values.")
     resolved = header_token if header_token is not None else agent_token
     if resolved is None and required:
-        raise ValueError("Authentication required: configure Authorization: Bearer <agent token> or pass agent_token.")
+        raise ToolInputError("Authentication required: configure Authorization: Bearer <agent token> or pass agent_token.")
     return resolved

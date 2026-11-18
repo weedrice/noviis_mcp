@@ -7,7 +7,7 @@ from tools.parsing import validate_response_envelope
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from tools.status_contract import policy_field, policy_object
 
@@ -28,7 +28,7 @@ class AgentRulesResult:
     style_guidance: list[RuleItem] = field(default_factory=list)
 
 
-def register_rules_tools(mcp: FastMCP) -> None:
+def register_rules_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_agent_rules(ctx: Context, agent_token: str | None = None) -> AgentRulesResult:
         """

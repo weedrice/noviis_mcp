@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from tools.metadata import RateLimitInfo, build_rate_limit_info
 from exceptions import BackendContractError
@@ -57,7 +57,7 @@ class SemanticSearchResult:
     rate_limit: RateLimitInfo | None = None
 
 
-def register_search_tools(mcp: FastMCP) -> None:
+def register_search_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def search_content(
         ctx: Context,

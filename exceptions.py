@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from mcp.server.mcpserver.exceptions import ToolError
 
-class NoviIsMCPError(Exception):
-    """Base exception for NoviIs MCP server errors."""
+
+class ToolInputError(ValueError, ToolError):
+    """Deliberate, public input guidance; unexpected ValueErrors stay private."""
+
+
+class NoviIsMCPError(ToolError):
+    """Expected domain errors with messages safe to return to MCP clients."""
 
 
 class Unauthorized(NoviIsMCPError):
