@@ -72,9 +72,12 @@ def create_mcp_server() -> FastMCP:
         streamable_http_path="/mcp",
         json_response=True,
         stateless_http=True,
+        # Keep the SDK's body cap aligned with our pre-parsing middleware;
+        # its 4 MiB default is smaller than supported image-upload requests.
+        max_request_body_size=MCP_MAX_REQUEST_BYTES,
         lifespan=mcp_lifespan,
     )
-    # FastMCP 1.26 does not expose a version constructor argument. Keep this
+    # FastMCP 1.x does not expose a version constructor argument. Keep this
     # narrow SDK adapter covered by the protocol initialization smoke test.
     mcp._mcp_server.version = package_version()
     register_auth_tools(mcp)

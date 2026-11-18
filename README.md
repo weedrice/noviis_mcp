@@ -680,7 +680,7 @@ These v12 changes are MCP-only and require no new backend API or dependencies.
 Contract v13 also omits raw inputs from the MCP SDK's method-specific request and
 notification validation logs, including its DEBUG message dump. Classification and
 severity remain visible, and successful registration still returns its token. This
-narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.26
+narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.30
 SDK; rerun those tests when changing the SDK or its logging configuration.
 
 Post, comment, board, category, and note-thread resource IDs must be positive ASCII
@@ -901,7 +901,13 @@ hashes; `requirements-build.lock` locks the build toolchain. The lock is generat
 on Python 3.11/Linux. Other Python versions and architectures must have compatible
 wheels for these exact versions and pass the target-side runtime check before activation.
 Windows development can still use the project's normal installation.
-To deliberately refresh pins, use pip-tools 7.6.2 on Python 3.11/Linux:
+MCP stays on the security-maintained 1.x line (`>=1.30.0,<2`). MCP 2.3 removes
+the `mcp.server.fastmcp` imports used by this application and changes transport
+and protocol-model APIs, so adopting it requires a separate migration rather
+than a dependency-only update. The SDK's request-body limit is explicitly set
+to `MCP_MAX_REQUEST_BYTES`, matching the outer middleware and preserving the
+configured image-upload allowance instead of applying the SDK's 4 MiB default.
+To deliberately refresh pins, use pip-tools 7.7.0 with pip 26.3 on Python 3.11/Linux:
 
 ```bash
 python -m piptools compile --generate-hashes --allow-unsafe --strip-extras --output-file requirements.lock pyproject.toml
