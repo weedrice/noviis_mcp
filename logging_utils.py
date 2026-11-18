@@ -4,11 +4,61 @@ import json
 import logging
 import logging.config
 import re
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, quote_plus
+from uuid import uuid4
 
 from config import LOG_DIR, LOG_JSON, LOG_LEVEL
+
+
+@dataclass
+class RequestLogContext:
+    request_id: str = field(default_factory=lambda: uuid4().hex)
+    private_values: set[str] = field(default_factory=set)
+
+
+# SDK child tasks inherit the same request-local object; newly discovered search
+# text stays redacted through tool error logging and request completion.
+request_log_context: ContextVar[RequestLogContext | None] = ContextVar("request_log_context", default=None)
+
+
+def _prepare_context(record: logging.LogRecord) -> None:
+    context = request_log_context.get()
+    if context is not None:
+        record.request_id = context.request_id
+
+
+def _sanitize_log(value: Any) -> Any:
+    context = request_log_context.get()
+    return sanitize_error_data(value, known_secrets=tuple(context.private_values) if context else ())
+
+
+def _log_extra(key: str, value: Any) -> Any:
+    # A short query (e.g. "a") must not corrupt the generated correlation ID.
+    if key == "request_id" and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
+        return value
+    if key == "outcome" and value in ("success", "error", "invalid_input", "http_error", "transport_error",
+                                      "contract_error", "timeout", "cancelled", "disconnected", "incomplete", "overloaded"):
+        return value
+    if key == "http_method" and value in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        return value
+    return _sanitize_log(_sanitize_secret_key(key, value))
+
+
+LOG_EVENT_NAMES = frozenset({
+        "noviis_api_request", "noviis_api_response", "noviis_api_complete", "noviis_api_unauthorized",
+        "noviis_api_forbidden", "noviis_api_server_error", "noviis_api_server_error_retry",
+        "noviis_api_unhandled_status", "mcp_request_complete", "httpx_request", "httpcore_event",
+})
+
+
+def _log_message(record: logging.LogRecord) -> str:
+    message = record.getMessage()
+    # Fixed event names are not copies of a coincidentally equal search.
+    return message if message in LOG_EVENT_NAMES else _sanitize_log(message)
 
 
 TOKEN_PATTERN = re.compile(r"noviis_agt_[A-Za-z0-9_-]+")
@@ -55,8 +105,47 @@ SDK_VALIDATION_MESSAGES = {
 }
 
 
+def safe_log_params(params: Any) -> dict[str, Any]:
+    """Only bounded pagination and a known content filter belong in diagnostics."""
+    if not params:
+        return {}
+    result = {key: params[key] for key in ("page", "size", "limit")
+              if key in params and type(params[key]) is int and 0 <= params[key] <= 1_000_000}
+    if params.get("contentType") in ("ALL", "POST", "COMMENT"):
+        result["contentType"] = params["contentType"]
+    return result
+
+
+def _prepare_http_record(record: logging.LogRecord) -> None:
+    """HTTPX URLs and httpcore wire diagnostics can contain arbitrary user data.
+
+    Keep safe method/status facts from the pinned HTTPX request event. Application
+    events provide paths and failures; wire headers and reason phrases are omitted.
+    Also called by formatters so privacy does not depend on handler configuration.
+    """
+    if getattr(record, "_http_privacy_prepared", False):
+        return
+    if record.name == "httpx" or record.name.startswith("httpx."):
+        args = record.args
+        if record.msg == 'HTTP Request: %s %s "%s %d %s"' and isinstance(args, tuple) and len(args) == 5:
+            if args[0] in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+                record.http_method = args[0]
+            if type(args[3]) is int and 100 <= args[3] <= 599:
+                record.status_code = args[3]
+        record.msg = "httpx_request"
+    elif record.name == "httpcore" or record.name.startswith("httpcore."):
+        record.msg = "httpcore_event"
+    else:
+        return
+    record.args = ()
+    record.exc_info = record.exc_text = record.stack_info = None
+    record._http_privacy_prepared = True
+
+
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        _prepare_context(record)
+        _prepare_http_record(record)
         # Render first: redacting a format string can remove its % placeholders.
         message = record.getMessage()
         # MCP SDK 1.26 logs method-specific validation errors and raw messages
@@ -77,42 +166,56 @@ class SensitiveDataFilter(logging.Filter):
             for key, value in record.args.items():
                 if _is_secret_key(key) and str(value):
                     message = message.replace(str(value), "****")
-        record.msg = _sanitize(message)
+        record.msg = message if message in LOG_EVENT_NAMES else _sanitize_log(message)
         record.args = ()
 
         for key, value in list(record.__dict__.items()):
             if key in LOG_RECORD_BASE_FIELDS:
                 continue
-            record.__dict__[key] = _sanitize_secret_key(key, value)
+            record.__dict__[key] = _log_extra(key, value)
         return True
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        _prepare_context(record)
+        _prepare_http_record(record)
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": _sanitize(record.getMessage()),
+            "message": _log_message(record),
         }
         if record.exc_info:
-            payload["exception"] = _sanitize(self.formatException(record.exc_info))
+            payload["exception"] = _sanitize_log(self.formatException(record.exc_info))
         elif record.exc_text:
-            payload["exception"] = _sanitize(record.exc_text)
+            payload["exception"] = _sanitize_log(record.exc_text)
         if record.stack_info:
-            payload["stack"] = _sanitize(record.stack_info)
+            payload["stack"] = _sanitize_log(record.stack_info)
 
         for key, value in _extra_record_items(record):
-            payload[key] = _sanitize_secret_key(key, value)
+            payload[key] = _log_extra(key, value)
         return json.dumps(payload, ensure_ascii=False)
 
 
 class PlainFormatter(logging.Formatter):
+    def formatException(self, exc_info) -> str:
+        return _sanitize_log(super().formatException(exc_info))
+
+    def formatStack(self, stack_info) -> str:
+        return _sanitize_log(super().formatStack(stack_info))
+
     def format(self, record: logging.LogRecord) -> str:
+        _prepare_context(record)
+        _prepare_http_record(record)
+        record.msg = _log_message(record)
+        record.args = ()
+        if record.exc_text:
+            record.exc_text = _sanitize_log(record.exc_text)
         base = super().format(record)
-        extras = {key: _sanitize_secret_key(key, value) for key, value in _extra_record_items(record)}
+        extras = {key: _log_extra(key, value) for key, value in _extra_record_items(record)}
         if extras:
-            return _sanitize(f"{base} {json.dumps(extras, ensure_ascii=False)}")
+            return f"{_sanitize(base)} {json.dumps(extras, ensure_ascii=False)}"
         return _sanitize(base)
 
 

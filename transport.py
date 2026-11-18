@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import json
 import math
+import logging
 import time
 
 import anyio
@@ -16,6 +17,10 @@ from starlette._utils import get_route_path
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from logging_utils import RequestLogContext, request_log_context
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,10 +50,60 @@ class RequestLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        context = RequestLogContext()
+        context_token = request_log_context.set(context)
+        started = time.perf_counter()
+        trace = {"status_code": None, "outcome": "error"}
+        completed = False
+        disconnected = False
+
+        async def observe_receive() -> Message:
+            nonlocal disconnected
+            message = await receive()
+            disconnected = disconnected or message["type"] == "http.disconnect"
+            return message
+
+        async def observe_send(message: Message) -> None:
+            nonlocal completed
+            if message["type"] == "http.response.start":
+                message = {**message, "headers": [
+                    (key, value) for key, value in message.get("headers", [])
+                    if key.lower() != b"x-request-id"
+                ] + [(b"x-request-id", context.request_id.encode("ascii"))]}
+            await send(message)
+            if message["type"] == "http.response.start":
+                trace["status_code"] = message["status"]
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                completed = True
+
+        try:
+            await self._handle_http(scope, observe_receive, observe_send, trace)
+            if trace["outcome"] == "error":
+                trace["outcome"] = ("disconnected" if disconnected and not completed else
+                                    "incomplete" if not completed else
+                                    "http_error" if trace["status_code"] and trace["status_code"] >= 400 else "success")
+        except BaseException as exc:
+            if isinstance(exc, anyio.get_cancelled_exc_class()):
+                trace["outcome"] = "disconnected" if disconnected else "cancelled"
+            elif isinstance(exc, (OSError, anyio.BrokenResourceError, anyio.EndOfStream)):
+                trace["outcome"] = "disconnected"
+            raise
+        finally:
+            try:
+                logger.info("mcp_request_complete", extra={
+                    "http_method": scope.get("method", ""),
+                    "path": scope.get("path") if scope.get("path") in {"/mcp", "/"} else "<other>",
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3), **trace,
+                })
+            finally:
+                request_log_context.reset(context_token)
+
+    async def _handle_http(self, scope: Scope, receive: Receive, send: Send, trace: dict) -> None:
         now = self.clock()
         while self.started and self.started[0] <= now - self.window_seconds:
             self.started.popleft()
         if self.active >= self.max_concurrent or len(self.started) >= self.request_limit:
+            trace["outcome"] = "overloaded"
             retry_after = 1 if len(self.started) < self.request_limit else max(1, math.ceil(self.started[0] + self.window_seconds - now))
             await JSONResponse({"error": "mcp_request_limit"}, status_code=429,
                                headers={"Retry-After": str(retry_after)})(scope, receive, send)
@@ -78,6 +133,7 @@ class RequestLimitMiddleware:
                 lifetime.deadline = anyio.current_effective_deadline()
                 await self.app(scope, receive, track_send)
             if deadline.cancel_called:
+                trace["outcome"] = "timeout"
                 if lifetime.cancel is not None:
                     lifetime.cancel()
                 # A slow reader must not indefinitely hold an admission slot
