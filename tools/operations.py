@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from config import NOVIIS_OPERATION_SUPPORT
 from exceptions import BackendContractError, NoviIsAPIError
 from tools.authentication import resolve_agent_token
@@ -14,7 +16,7 @@ from tools.response_contract import require_response_id
 
 def check_operation_support(operation_id: str | None) -> None:
     if operation_id is not None and not NOVIIS_OPERATION_SUPPORT:
-        raise ValueError("Backend operation support is disabled. Enable it only after the backend migration and API are deployed.")
+        raise ToolInputError("Backend operation support is disabled. Enable it only after the backend migration and API are deployed.")
 
 
 def write_operation_id(challenge_id: str, operation_id: str | None) -> str | None:
@@ -36,7 +38,7 @@ class OperationResult:
     message: str | None = None
 
 
-def register_operation_tools(mcp: FastMCP) -> None:
+def register_operation_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_operation_result(ctx: Context, operation_id: str, agent_token: str | None = None) -> OperationResult:
         """Look up this agent's committed write result. not_found does not prove failure:

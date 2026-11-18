@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from challenge import ChallengeManager
 from tools.tool_contract import tool_contracts, validate_action

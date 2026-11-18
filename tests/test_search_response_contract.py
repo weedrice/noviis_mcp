@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 from tools.tool_contract import tool_contracts
 
 from exceptions import BackendContractError

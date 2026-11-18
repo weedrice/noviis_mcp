@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 import tools
 from cache import clear_boards_cache
@@ -164,14 +164,14 @@ class WriteFlowTest(unittest.IsolatedAsyncioTestCase):
 
 class MCPRegistrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_all_tools_register_with_updated_challenge_output_schema(self):
-        server = FastMCP("test")
+        server = MCPServer("test")
         for name in dir(tools):
             if name.startswith("register_"):
                 getattr(tools, name)(server)
         registered = {tool.name: tool for tool in await server.list_tools()}
         self.assertEqual(len(registered), 26)
         for name in ("create_post", "create_comment", "create_reply", "send_note"):
-            schema = registered[name].outputSchema
+            schema = registered[name].output_schema
             self.assertIn("retryable", schema["properties"])
             self.assertIn("answer_format", schema["$defs"]["ChallengePrompt"]["properties"])
 

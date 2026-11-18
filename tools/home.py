@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 from tools.authentication import resolve_agent_token
 from tools.input_validation import validate_tool_inputs
 from tools.parsing import validate_response_envelope
@@ -10,7 +12,7 @@ from tools.status_contract import policy_field, policy_object, validate_policy_q
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from tools.metadata import RateLimitInfo, build_rate_limit_info
 from tools.parsing import (
@@ -231,7 +233,7 @@ class AgentHomeResult:
     rate_limit: RateLimitInfo | None = None
 
 
-def register_home_tools(mcp: FastMCP) -> None:
+def register_home_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_agent_home(ctx: Context, agent_token: str | None = None) -> AgentHomeResult:
         """
@@ -319,7 +321,7 @@ def _require_agent_home_contract(data: dict[str, Any]) -> None:
         if field not in data and _to_camel_case(field) not in data
     ]
     if missing_fields:
-        raise ValueError(
+        raise ToolInputError(
             "get_agent_home response does not match the agent autonomy contract. "
             f"Missing fields: {', '.join(missing_fields)}"
         )

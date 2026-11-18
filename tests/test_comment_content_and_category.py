@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from test_read_resource_contract import comment, post, run_read
 

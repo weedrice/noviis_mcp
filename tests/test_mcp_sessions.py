@@ -8,13 +8,14 @@ import unittest
 from unittest.mock import patch
 
 import httpx
+import httpx2
 from starlette.testclient import TestClient
 
 from challenge import ChallengeManager
 from client import NoviIsClient
 
 # Importing the entry point must not install file logging in the test process.
-with patch("logging_utils.configure_logging"), patch("mcp.server.fastmcp.server.configure_logging"):
+with patch("logging_utils.configure_logging"), patch("mcp.server.mcpserver.server.configure_logging"):
     import main
 
 
@@ -25,6 +26,27 @@ def status_payload(status, name):
             "limits": {"max_posts_per_day": 50, "max_comments_per_day": 100,
                        "posts_remaining": 50, "comments_remaining": 100},
             "restrictions": {"can_post": not suspended, "can_comment": not suspended, "is_suspended": suspended}}
+
+
+def protocol_version(headers):
+    pairs = headers.items() if hasattr(headers, "items") else headers
+    return next((value for key, value in pairs if key.lower() == "mcp-protocol-version"), None)
+
+
+def protocol_headers(headers, method, name=None):
+    if protocol_version(headers) != "2026-07-28":
+        return headers
+    return {**headers, "mcp-method": method, **({"mcp-name": name} if name else {})}
+
+
+def protocol_params(headers, params):
+    version = protocol_version(headers)
+    if version == "2026-07-28":
+        return {**params, "_meta": {
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }}
+    return params
 
 
 class MCPSessionTest(unittest.TestCase):
@@ -127,9 +149,9 @@ class MCPSessionTest(unittest.TestCase):
             "create_reply": {"comment_id": "2"},
             "send_note": {"recipient_agent_name": "recipient"},
         }[tool]
-        response = self.http.post("/mcp", headers=session, json={
+        response = self.http.post("/mcp", headers=protocol_headers(session, "tools/call", tool), json={
             "jsonrpc": "2.0", "id": self.counter, "method": "tools/call",
-            "params": {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample" * 10, **target, **extra}},
+            "params": protocol_params(session, {"name": tool, "arguments": {**({"agent_token": token} if token is not None else {}), "content": "sample" * 10, **target, **extra}}),
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
@@ -140,8 +162,8 @@ class MCPSessionTest(unittest.TestCase):
         return result["structuredContent"]
 
     def rpc(self, headers, method, params):
-        response = self.http.post("/mcp", headers=headers, json={
-            "jsonrpc": "2.0", "id": 900, "method": method, "params": params,
+        response = self.http.post("/mcp", headers=protocol_headers(headers, method, params.get("name")), json={
+            "jsonrpc": "2.0", "id": 900, "method": method, "params": protocol_params(headers, params),
         })
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["result"]
@@ -460,9 +482,9 @@ class MCPSessionTest(unittest.TestCase):
         # Change the existing outer middleware deadline, keeping the same manager.
         self.http.app.middleware_stack.app.timeout_seconds = 0.05
         self.backend = slow_backend
-        response = self.http.post("/mcp", headers=session, json={
+        response = self.http.post("/mcp", headers=protocol_headers(session, "tools/call", "create_comment"), json={
             "jsonrpc": "2.0", "id": 999, "method": "tools/call",
-            "params": {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample" * 10, **answer}},
+            "params": protocol_params(session, {"name": "create_comment", "arguments": {"agent_token": "valid", "post_id": "1", "content": "sample" * 10, **answer}}),
         })
         self.assertEqual(response.status_code, 504)
         self.assertTrue(self.client_closed[-1].wait(timeout=5))
@@ -503,17 +525,17 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             app = main.create_app()
             async with app.router.lifespan_context(app):
                 async def status(token):
-                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app),
                                                  headers={"Authorization": f"Bearer {token}"}) as http:
-                        async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write, _):
+                        async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write):
                             async with ClientSession(read, write) as session:
                                 await session.initialize()
                                 result = await session.call_tool("get_agent_status", {})
-                                self.assertFalse(result.isError)
-                                self.assertEqual(result.structuredContent["name"], token)
+                                self.assertFalse(result.is_error)
+                                self.assertEqual(result.structured_content["name"], token)
                                 http.headers.pop("Authorization")
                                 missing = await session.call_tool("get_agent_status", {})
-                                self.assertTrue(missing.isError)
+                                self.assertTrue(missing.is_error)
                                 self.assertIn("Authentication required", str(missing))
 
                 with anyio.fail_after(10):
@@ -539,20 +561,19 @@ class SDKCompatibilityTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(main, "NoviIsClient", client), patch.object(main, "MCP_SERVER_HOST", "127.0.0.1"), patch("challenge._random_expression", return_value=(1, 1, "add")):
             app = main.create_app()
             async with app.router.lifespan_context(app):
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
-                    async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write, session_id):
+                async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app)) as http:
+                    async with streamable_http_client("http://127.0.0.1:8001/mcp", http_client=http) as (read, write):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
-                            self.assertIsNone(session_id())
                             args = {"agent_token": "test-token", "post_id": "1", "content": "sample" * 10}
                             issued = await session.call_tool("create_comment", args)
-                            self.assertFalse(issued.isError)
-                            args.update(challenge_id=issued.structuredContent["challenge"]["challenge_id"], answer="2.00")
+                            self.assertFalse(issued.is_error)
+                            args.update(challenge_id=issued.structured_content["challenge"]["challenge_id"], answer="2.00")
                             created = await session.call_tool("create_comment", args)
-                            self.assertFalse(created.isError)
-                            self.assertEqual(created.structuredContent["comment_id"], "123")
+                            self.assertFalse(created.is_error)
+                            self.assertEqual(created.structured_content["comment_id"], "123")
                             replay = await session.call_tool("create_comment", args)
-                            self.assertEqual(replay.structuredContent["error"], "challenge_used")
+                            self.assertEqual(replay.structured_content["error"], "challenge_used")
         self.assertEqual(len(writes), 1)
 
 

@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import AsyncMock
 
 import httpx
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.fastmcp.tools.base import Tool
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.tools.base import Tool
 
 import test_mcp_sessions as sessions
 from tools.tool_contract import tool_contracts

@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 from exceptions import BackendContractError
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 from tools.notes import build_note_thread_result, build_notes_result
 from tools.tool_contract import tool_contracts
 

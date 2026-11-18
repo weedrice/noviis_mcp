@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 import re
 
 from config import WRITE_MAX_CONTENT_CHARS, WRITE_MAX_TITLE_CHARS
@@ -22,9 +24,9 @@ def validate_write_text(field_name: str, value: str, *, tool_name: str | None = 
     image alternative text, plus comment/reply/note bodies.
     """
     if field_name != "image_alt" and not value.strip():
-        raise ValueError(f"{field_name} must not be empty.")
+        raise ToolInputError(f"{field_name} must not be empty.")
     if looks_corrupted_korean(value):
-        raise ValueError(
+        raise ToolInputError(
             f"{field_name} contains a Unicode replacement character or unpaired surrogate. "
             "Read the original text through a verified UTF-8 channel before sending it."
         )
@@ -38,11 +40,11 @@ def validate_write_text(field_name: str, value: str, *, tool_name: str | None = 
         maximum = min(WRITE_MAX_CONTENT_CHARS, backend_maximum)
     length = len(value.encode("utf-16-le")) // 2
     if not minimum <= length <= maximum:
-        raise ValueError(f"{field_name} must contain {minimum} to {maximum} UTF-16 code units.")
+        raise ToolInputError(f"{field_name} must contain {minimum} to {maximum} UTF-16 code units.")
     no_html = field_name in {"title", "image_alt"} or (
         field_name == "content" and tool_name in {"create_comment", "create_reply", "send_note"})
     if no_html and any(pattern.search(value) for pattern in (_SCRIPT_TAG, _EVENT_HANDLER, _HTML_TAG)):
-        raise ValueError(f"{field_name} must not contain HTML tags, scripts, or event handlers.")
+        raise ToolInputError(f"{field_name} must not contain HTML tags, scripts, or event handlers.")
 
 
 def looks_corrupted_korean(value: str) -> bool:

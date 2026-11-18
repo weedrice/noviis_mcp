@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-from mcp.types import JSONRPCMessage
+from mcp.types import jsonrpc_message_adapter
 from pydantic import ValidationError
 
 import test_mcp_sessions as sessions
@@ -39,7 +39,7 @@ class RPCEnvelopePrivacyTest(unittest.TestCase):
         for index, payload in enumerate(cases):
             with self.subTest(case=index):
                 with self.assertRaises(ValidationError):
-                    JSONRPCMessage.model_validate(payload)
+                    jsonrpc_message_adapter.validate_python(payload)
                 response = self.post(payload)
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(response.json(), {

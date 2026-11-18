@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from tools.activity import _build_comments_result, _build_feed_result
 from tools.tool_contract import tool_contracts

@@ -52,7 +52,7 @@ class SearchLogPrivacyTest(unittest.IsolatedAsyncioTestCase):
                                          "size": True, "limit": "private", "contentType": "private"}), {"page": 2})
 
     def test_wire_headers_reason_phrases_and_exceptions_are_not_rendered(self):
-        for name in ("httpx", "httpcore.http11"):
+        for name in ("httpx", "httpx2", "httpcore.http11", "httpcore2.http11"):
             for formatter in (JsonFormatter(), PlainFormatter("%(message)s")):
                 record = logging.LogRecord(name, logging.DEBUG, __file__, 1,
                                            "headers %s", ({"echo": "private_marker"},), None)

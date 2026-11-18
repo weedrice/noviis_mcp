@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
 HEARTBEAT_GUIDE = """# NoviIs Agent Guide
@@ -124,7 +124,7 @@ class AgentGuideResult:
     markdown: str
 
 
-def register_guide_tools(mcp: FastMCP) -> None:
+def register_guide_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_agent_guide() -> AgentGuideResult:
         """

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 from tools.operations import check_operation_support, write_operation_id
 from tools.input_validation import board_lookup_id, validate_post_board_target, image_mime_type
 from tools.authentication import resolve_agent_token
@@ -12,7 +14,7 @@ from functools import partial
 from typing import Any
 
 from challenge import ChallengePrompt
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from cache import clear_boards_cache, load_boards_cached
 from pydantic import StrictBool
@@ -240,7 +242,7 @@ class DeletePostResult:
     deleted_at: str | None = None
 
 
-def register_activity_tools(mcp: FastMCP) -> None:
+def register_activity_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_boards(ctx: Context, agent_token: str | None = None, force_refresh: StrictBool = False) -> BoardsResult:
         """
@@ -539,7 +541,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         _validate_write_text("content", content, tool_name="create_post")
         normalized_image_file_id = _normalize_image_file_id(image_file_id)
         if image_alt is not None and image_alt.strip() and normalized_image_file_id is None:
-            raise ValueError("image_alt requires image_file_id.")
+            raise ToolInputError("image_alt requires image_file_id.")
         if image_alt is not None:
             _validate_write_text("image_alt", image_alt, tool_name="create_post")
         result_factory = partial(CreatePostResult, text_warnings=write_text_warnings(title, content, image_alt))
@@ -1105,7 +1107,7 @@ async def _preflight_create_post(runtime: Any, agent_token: str) -> CreatePostRe
 
 def _decode_post_image(image_base64: str, *, mime_type: str | None = None) -> bytes:
     if not image_base64 or not image_base64.strip():
-        raise ValueError("image_base64 must not be empty.")
+        raise ToolInputError("image_base64 must not be empty.")
     encoded = image_base64.strip()
     expected_mime = image_mime_type(mime_type) if mime_type is not None else None
     if encoded.lower().startswith("data:"):
@@ -1114,19 +1116,19 @@ def _decode_post_image(image_base64: str, *, mime_type: str | None = None) -> by
         if (not separator or len(parts) < 2 or parts[-1].lower() != "base64"
                 or any("=" not in part or not part.split("=", 1)[0] for part in parts[1:-1])
                 or any(char in header for char in "\r\n\x00")):
-            raise ValueError("image_base64 data URI must use Base64 encoding.")
+            raise ToolInputError("image_base64 data URI must use Base64 encoding.")
         declared_mime = image_mime_type(parts[0])
         if expected_mime is not None and declared_mime != expected_mime:
-            raise ValueError("image_base64 data URI MIME type must match mime_type.")
+            raise ToolInputError("image_base64 data URI MIME type must match mime_type.")
     encoded = "".join(encoded.split())
     try:
         decoded = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError("image_base64 must be valid Base64 data.") from exc
+        raise ToolInputError("image_base64 must be valid Base64 data.") from exc
     if not decoded:
-        raise ValueError("image_base64 must not decode to an empty image.")
+        raise ToolInputError("image_base64 must not decode to an empty image.")
     if len(decoded) > 10 * 1024 * 1024:
-        raise ValueError("The decoded image must not exceed 10 MiB.")
+        raise ToolInputError("The decoded image must not exceed 10 MiB.")
     return decoded
 
 
@@ -1135,10 +1137,10 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
         return None
     if (not isinstance(image_file_id, str) or not image_file_id.isascii()
             or not image_file_id.isdecimal()):
-        raise ValueError("image_file_id must be a positive decimal Long.")
+        raise ToolInputError("image_file_id must be a positive decimal Long.")
     normalized = image_file_id.lstrip("0")
     if not normalized or len(normalized) > 19 or int(normalized) > 9_223_372_036_854_775_807:
-        raise ValueError("image_file_id must be a positive decimal Long.")
+        raise ToolInputError("image_file_id must be a positive decimal Long.")
     return normalized
 
 
@@ -1156,7 +1158,7 @@ async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = 
 
 async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_token: str) -> str:
     if board_id is None:
-        raise ValueError("board_url could not be resolved; provide board_id or board_url.")
+        raise ToolInputError("board_url could not be resolved; provide board_id or board_url.")
     board_id_str = str(board_lookup_id(board_id))
     # Cached slugs can be renamed and reused by another board. Every write step
     # must resolve its stable ID from a fresh list, including challenge issuance.
@@ -1164,7 +1166,7 @@ async def _resolve_board_url(runtime: Any, board_id: str | int | None, agent_tok
     resolved = _find_board_url(boards, board_id_str)
     if resolved is not None:
         return resolved
-    raise ValueError("board_id was not found in this agent's board list; use get_boards(force_refresh=true) or provide board_url.")
+    raise ToolInputError("board_id was not found in this agent's board list; use get_boards(force_refresh=true) or provide board_url.")
 
 
 def _read_boards_collection(payload: Any) -> list[dict[str, Any]]:

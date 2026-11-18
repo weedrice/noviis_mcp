@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.parse import quote
 
 import httpx
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from client import NoviIsClient
 from exceptions import AgentSuspended, NoviIsAPIError, PermissionDenied, ServerError, Unauthorized

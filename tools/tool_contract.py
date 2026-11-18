@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
-from mcp.server.fastmcp.tools.base import Tool
+from mcp.server.mcpserver.tools.base import Tool
 from pydantic import ValidationError
 
 from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target, image_mime_type

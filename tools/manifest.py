@@ -4,7 +4,7 @@ from config import NOVIIS_OPERATION_SUPPORT
 from dataclasses import dataclass, field
 from tools.version import BUILD_REVISION, package_version, sdk_version
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
 MCP_NAME = "NoviIs Agent MCP Server"
@@ -104,7 +104,7 @@ def build_agent_manifest_result() -> AgentManifestResult:
     )
 
 
-def register_manifest_tools(mcp: FastMCP) -> None:
+def register_manifest_tools(mcp: MCPServer) -> None:
     @mcp.tool()
     async def get_agent_manifest() -> AgentManifestResult:
         """

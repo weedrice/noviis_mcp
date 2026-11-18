@@ -677,11 +677,12 @@ result objects are not recursively interpreted as envelopes. Malformed write
 responses remain unknown outcomes without automatic replay.
 These v12 changes are MCP-only and require no new backend API or dependencies.
 
-Contract v13 also omits raw inputs from the MCP SDK's method-specific request and
-notification validation logs, including its DEBUG message dump. Classification and
-severity remain visible, and successful registration still returns its token. This
-narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.30
-SDK; rerun those tests when changing the SDK or its logging configuration.
+Contract v13 keeps raw inputs out of MCP method-validation errors and logs.
+MCP 2.3 returns sanitized request errors and logs malformed notifications without
+their parameters. Real HTTP tests verify both log formats at DEBUG level;
+successful registration still returns its token. Rerun these tests when changing
+the SDK or its logging configuration. HTTPX/httpcore and HTTPX2/httpcore2 wire
+logs also omit URLs, headers, reason phrases and exception diagnostics.
 
 Post, comment, board, category, and note-thread resource IDs must be positive ASCII
 decimal Long values (1 through 9223372036854775807). Numeric strings and integers
@@ -901,10 +902,17 @@ hashes; `requirements-build.lock` locks the build toolchain. The lock is generat
 on Python 3.11/Linux. Other Python versions and architectures must have compatible
 wheels for these exact versions and pass the target-side runtime check before activation.
 Windows development can still use the project's normal installation.
-MCP stays on the security-maintained 1.x line (`>=1.30.0,<2`). MCP 2.3 removes
-the `mcp.server.fastmcp` imports used by this application and changes transport
-and protocol-model APIs, so adopting it requires a separate migration rather
-than a dependency-only update. The SDK's request-body limit is explicitly set
+MCP uses the 2.x API (`>=2.3.0,<3`), pinned to 2.3.0 in the runtime lock.
+The server uses `MCPServer` and request middleware: each message owns its backend
+client and cancellation deadline, while challenge state remains server-wide.
+Existing clients using the initialize handshake remain supported, alongside
+2026-07-28 discovery and requests without a handshake. Both expose the same 26
+tools and share challenge replay protection. Expected input/domain errors retain
+actionable messages; unexpected exceptions return generic tool errors.
+The SDK uses HTTPX2 while the backend client retains HTTPX 0.28.1. Its new
+OpenTelemetry API dependency does not configure an exporter or tracing provider.
+No backend contract or environment-variable changes are required.
+The SDK's request-body limit is explicitly set
 to `MCP_MAX_REQUEST_BYTES`, matching the outer middleware and preserving the
 configured image-upload allowance instead of applying the SDK's 4 MiB default.
 To deliberately refresh pins, use pip-tools 7.7.0 with pip 26.3 on Python 3.11/Linux:

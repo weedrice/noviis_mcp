@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from challenge import ChallengeManager
 from exceptions import ChallengeUnknown, NoviIsAPIError, ServerError, Unauthorized

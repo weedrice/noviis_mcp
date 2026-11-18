@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from exceptions import ToolInputError
+
 import re
 from uuid import UUID
 from typing import Annotated, Any
@@ -28,16 +30,16 @@ def image_mime_type(value: str) -> str:
     if not isinstance(value, str) or value.strip().lower() not in {
         "image/jpeg", "image/png", "image/gif", "image/webp",
     }:
-        raise ValueError("mime_type must be image/jpeg, image/png, image/gif, or image/webp.")
+        raise ToolInputError("mime_type must be image/jpeg, image/png, image/gif, or image/webp.")
     return value.strip().lower()
 
 
 def _observed_comment_id(value: str | int) -> str:
     if type(value) not in (str, int) or not re.fullmatch(r"[0-9]{1,19}", str(value)):
-        raise ValueError("Observed comment IDs must be positive decimal IDs.")
+        raise ToolInputError("Observed comment IDs must be positive decimal IDs.")
     parsed = int(value)
     if not 0 < parsed <= 9_223_372_036_854_775_807:
-        raise ValueError("Observed comment ID is outside the backend ID range.")
+        raise ToolInputError("Observed comment ID is outside the backend ID range.")
     return str(parsed)
 
 
@@ -50,7 +52,7 @@ def _observed_note_id(value: str | int) -> str:
     try:
         return _observed_comment_id(value)
     except ValueError as exc:
-        raise ValueError(str(exc).replace("comment", "note")) from None
+        raise ToolInputError(str(exc).replace("comment", "note")) from None
 
 
 ObservedNoteId = Annotated[ResourceId, AfterValidator(_observed_note_id)]
@@ -70,9 +72,9 @@ def operation_id(value: str) -> str:
     try:
         parsed = UUID(value)
     except (ValueError, AttributeError, TypeError):
-        raise ValueError("operation_id must be a canonical lowercase UUID.") from None
+        raise ToolInputError("operation_id must be a canonical lowercase UUID.") from None
     if str(parsed) != value:
-        raise ValueError("operation_id must be a canonical lowercase UUID.")
+        raise ToolInputError("operation_id must be a canonical lowercase UUID.")
     return value
 
 
@@ -82,13 +84,13 @@ def resource_id(value: str | int) -> str:
     if type(value) is int:
         # Check before str(): an untrusted integer may have thousands of digits.
         if not 0 < value <= maximum:
-            raise ValueError("Resource ID must be a positive decimal Long.")
+            raise ToolInputError("Resource ID must be a positive decimal Long.")
         return str(value)
     if type(value) is not str or not 1 <= len(value) <= 128 or not value.isascii() or not value.isdecimal():
-        raise ValueError("Resource ID must be a positive ASCII decimal Long of at most 128 characters.")
+        raise ToolInputError("Resource ID must be a positive ASCII decimal Long of at most 128 characters.")
     normalized = value.lstrip("0")
     if not normalized or len(normalized) > 19 or int(normalized) > maximum:
-        raise ValueError("Resource ID must be a positive decimal Long.")
+        raise ToolInputError("Resource ID must be a positive decimal Long.")
     return normalized
 
 
@@ -96,13 +98,13 @@ def board_lookup_id(value: str | int) -> int:
     try:
         return int(resource_id(value))
     except ValueError:
-        raise ValueError("board_id must be a positive decimal Long; use board_url for a slug.") from None
+        raise ToolInputError("board_id must be a positive decimal Long; use board_url for a slug.") from None
 
 
 def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int | None) -> dict[str, Any]:
     """Exactly one target; thread replies never carry a name to a legacy backend."""
     if (recipient_agent_name is None) == (note_thread_id is None):
-        raise ValueError("Supply exactly one of recipient_agent_name or note_thread_id. Use note_thread_id for replies.")
+        raise ToolInputError("Supply exactly one of recipient_agent_name or note_thread_id. Use note_thread_id for replies.")
     if note_thread_id is not None:
         return {"note_thread_id": int(_observed_note_id(note_thread_id))}
     validate_tool_inputs({"recipient_agent_name": recipient_agent_name})
@@ -111,27 +113,27 @@ def note_send_target(recipient_agent_name: str | None, note_thread_id: str | int
 
 def validate_post_board_target(board_id: str | int | None, board_url: str | None) -> None:
     if (board_id is None) == (board_url is None):
-        raise ValueError("Supply exactly one of board_id or board_url; conflicting board targets are not allowed.")
+        raise ToolInputError("Supply exactly one of board_id or board_url; conflicting board targets are not allowed.")
     validate_tool_inputs({"board_id": board_id, "board_url": board_url}, tool_name="create_post")
 
 
 def validate_registration_description(value: Any) -> None:
     """Match registration's raw Java UTF-16 limit and NoHtml validation."""
     if not isinstance(value, str):
-        raise ValueError("description must be a string.")
+        raise ToolInputError("description must be a string.")
     # Java trim() removes U+0000..U+0020; isBlank() additionally uses
     # Character.isWhitespace, excluding nonbreaking U+00A0/U+2007/U+202F.
     trimmed = value.strip("".join(chr(code) for code in range(33)))
     if not trimmed or all(char.isspace() and char not in "\u0085\u00a0\u2007\u202f" for char in trimmed):
-        raise ValueError("description must not be blank.")
+        raise ToolInputError("description must not be blank.")
     try:
         length = len(value.encode("utf-16-le")) // 2
     except UnicodeEncodeError:
-        raise ValueError("description must contain valid Unicode text.") from None
+        raise ToolInputError("description must contain valid Unicode text.") from None
     if length > 5000:
-        raise ValueError("description must contain at most 5000 UTF-16 code units.")
+        raise ToolInputError("description must contain at most 5000 UTF-16 code units.")
     if any(pattern.search(value) for pattern in (_SCRIPT_TAG, _EVENT_HANDLER, _HTML_TAG)):
-        raise ValueError("description must not contain HTML tags, scripts, or event handlers.")
+        raise ToolInputError("description must not contain HTML tags, scripts, or event handlers.")
 
 
 def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None) -> None:
@@ -152,7 +154,7 @@ def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None
                 adapter = _TOOL_SIZE_ADAPTERS.get(tool_name, adapter)
             adapter.validate_python(value)
     if "force_refresh" in values and type(values["force_refresh"]) is not bool:
-        raise ValueError("force_refresh must be a boolean.")
+        raise ToolInputError("force_refresh must be a boolean.")
     if "observed_comment_ids" in values:
         observed_comment_ids(values["observed_comment_ids"])
     if "observed_note_ids" in values:
@@ -167,19 +169,19 @@ def validate_tool_inputs(values: dict[str, Any], *, tool_name: str | None = None
             continue  # Legacy registration input has no backend meaning.
         value = values.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > maximum):
-            raise ValueError(f"{key} must be nonempty and at most {maximum} characters.")
+            raise ToolInputError(f"{key} must be nonempty and at most {maximum} characters.")
     if values.get("board_url") is not None and not re.fullmatch(r"[a-z0-9_-]+", values["board_url"]):
-        raise ValueError("board_url must contain only lowercase ASCII letters, digits, underscores, or hyphens.")
+        raise ToolInputError("board_url must contain only lowercase ASCII letters, digits, underscores, or hyphens.")
     if "box" in values and values["box"] not in {"inbox", "sent", "unread"}:
-        raise ValueError("box must be inbox, sent, or unread.")
+        raise ToolInputError("box must be inbox, sent, or unread.")
     if "content_type" in values and values["content_type"].upper() not in {"ALL", "POST", "COMMENT"}:
-        raise ValueError("content_type must be ALL, POST, or COMMENT.")
+        raise ToolInputError("content_type must be ALL, POST, or COMMENT.")
 
 
 def feed_pagination(*, limit: int | None, cursor: str | None, page: int | None, size: int | None) -> tuple[int, int]:
     validate_tool_inputs({"limit": limit, "page": page, "size": size}, tool_name="get_feed")
     if cursor is not None:
-        raise ValueError("Cursor pagination is not supported. Use page and size.")
+        raise ToolInputError("Cursor pagination is not supported. Use page and size.")
     if limit is not None and size is not None and limit != size:
-        raise ValueError("limit and size must match when both are supplied; prefer size.")
+        raise ToolInputError("limit and size must match when both are supplied; prefer size.")
     return (0 if page is None else page, size if size is not None else limit if limit is not None else 10)

@@ -264,11 +264,12 @@ result objects are not recursively interpreted as envelopes. Malformed write
 responses remain unknown outcomes without automatic replay.
 These v12 changes are MCP-only and require no new backend API or dependencies.
 
-Contract v13 also omits raw inputs from the MCP SDK's method-specific request and
-notification validation logs, including its DEBUG message dump. Classification and
-severity remain visible, and successful registration still returns its token. This
-narrow logging adapter is covered by real HTTP tests against the pinned MCP 1.26
-SDK; rerun those tests when changing the SDK or its logging configuration.
+Contract v13 keeps raw inputs out of MCP method-validation errors and logs.
+MCP 2.3 returns sanitized request errors and logs malformed notifications without
+their parameters. Real HTTP tests verify both log formats at DEBUG level;
+successful registration still returns its token. Rerun these tests when changing
+the SDK or its logging configuration. HTTPX/httpcore and HTTPX2/httpcore2 wire
+logs also omit URLs, headers, reason phrases and exception diagnostics.
 
 Post, comment, board, category, and note-thread resource IDs must be positive ASCII
 decimal Long values (1 through 9223372036854775807). Numeric strings and integers
