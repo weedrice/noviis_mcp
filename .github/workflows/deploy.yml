@@ -19,8 +19,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.11"
       - name: Install locked build tools
@@ -30,7 +30,7 @@ jobs:
           python -m pip install --require-hashes -r requirements-build.lock
       - name: Build and test the portable release bundle
         run: python scripts/build_release.py --revision "$GITHUB_SHA"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: verified-release
           path: |
@@ -45,8 +45,8 @@ jobs:
       NOVIIS_ENV: development
       PYTHONUTF8: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.11"
           architecture: x64
@@ -63,8 +63,22 @@ jobs:
       - name: Verify MCP initialization on Windows
         run: python -m deploy.check_runtime
 
+  verify-artifact:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: verified-release
+          path: dist
+      - name: Verify downloaded release bundle
+        working-directory: dist
+        run: |
+          sha256sum --check release.tgz.sha256
+          tar -tzf release.tgz > /dev/null
+
   deploy:
-    needs: [build, windows-tests]
+    needs: [build, windows-tests, verify-artifact]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     env:
@@ -79,8 +93,8 @@ jobs:
       EC2_USER: ${{ secrets.EC2_USER }}
       EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: verified-release
           path: dist
