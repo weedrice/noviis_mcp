@@ -8,7 +8,7 @@ from typing import Any
 from mcp.server.fastmcp.tools.base import Tool
 from pydantic import ValidationError
 
-from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target
+from tools.input_validation import RESOURCE_ID_PARAMS, feed_pagination, observed_comment_ids, observed_note_ids, resource_id, validate_tool_inputs, note_send_target, image_mime_type
 from tools.write_safety import validate_write_text
 from tools.annotations import hide_tool_validation_inputs
 
@@ -74,6 +74,8 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
             validate_tool_inputs({name: value}, tool_name=tool_name)
             if name in RESOURCE_ID_PARAMS and value is not None:
                 params[name] = resource_id(value)
+            if name == "mime_type":
+                params[name] = image_mime_type(value)
             if name == "observed_comment_ids":
                 params[name] = observed_comment_ids(value)
             if name == "observed_note_ids":
@@ -119,7 +121,8 @@ def validate_action(tool_name: str, supplied: dict[str, Any]) -> tuple[dict[str,
         from tools.activity import _decode_post_image
 
         try:
-            _decode_post_image(params["image_base64"])
+            _decode_post_image(params["image_base64"],
+                               mime_type=params.get("mime_type") if "mime_type" not in invalid else None)
         except ValueError:
             invalid.add("image_base64")
     if tool_name == "get_feed":

@@ -601,7 +601,7 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
 
         set_boards_cache(
             [
-                {
+                {"postCount": 0,
                     "boardId": 2,
                     "boardUrl": "normal",
                     "boardName": "Normal",
@@ -611,7 +611,7 @@ class ActivityMappingTest(unittest.IsolatedAsyncioTestCase):
             agent_token="noviis_agt_test",
         )
 
-        fetch = AsyncMock(return_value={"data": [{"boardId": 2, "boardUrl": "normal"}]})
+        fetch = AsyncMock(return_value={"data": [{"postCount": 0, "boardId": 2, "boardUrl": "normal"}]})
         runtime = SimpleNamespace(client=SimpleNamespace(get_boards=fetch))
         self.assertEqual(await _resolve_board_url(runtime, 2, "noviis_agt_test"), "normal")
         fetch.assert_awaited_once_with(token="noviis_agt_test")

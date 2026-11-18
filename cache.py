@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import time
+from itertools import chain
 from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -9,11 +11,12 @@ from typing import Any
 
 import anyio
 
-from config import BOARDS_CACHE_TTL_SECONDS
+from config import BOARDS_CACHE_TTL_SECONDS, BOARDS_CACHE_MAX_BYTES
 
 # Bound the number of cached identities and avoid retaining raw bearer tokens as keys.
 _MAX_CACHE_ENTRIES = 256
 _boards_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_entry_bytes: dict[str, int] = {}
 
 
 @dataclass(eq=False)
@@ -94,7 +97,41 @@ def _cache_key(agent_token: str) -> str:
 def _expire_entries(now: float) -> None:
     for key, (created_at, _) in list(_boards_cache.items()):
         if now - created_at >= BOARDS_CACHE_TTL_SECONDS:
-            del _boards_cache[key]
+            _drop_entry(key)
+
+
+def _drop_entry(key: str) -> None:
+    _boards_cache.pop(key, None)
+    _entry_bytes.pop(key, None)
+
+
+def _payload_bytes(value: Any, limit: int) -> int:
+    """Estimate retained Python payload memory, stopping once it exceeds budget.
+
+    Iterators avoid a recursion limit or a second list of all nested values.
+    Shared objects are counted once per entry; cross-entry sharing is not assumed.
+    """
+    total = 0
+    seen: set[int] = set()
+    pending = [iter((value,))]
+    while pending:
+        try:
+            item = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += sys.getsizeof(item)
+        if total > limit:
+            return total
+        if isinstance(item, dict):
+            pending.append(chain(item.keys(), item.values()))
+        elif isinstance(item, (list, tuple)):
+            pending.append(iter(item))
+    return total
 
 
 def get_boards_cache(agent_token: str) -> list[dict[str, Any]] | None:
@@ -110,21 +147,32 @@ def set_boards_cache(boards: Sequence[dict[str, Any]], *, agent_token: str,
         return
     now = time.monotonic()
     _expire_entries(now)
-    _boards_cache.pop(key, None)
-    if len(_boards_cache) >= _MAX_CACHE_ENTRIES:
-        _boards_cache.pop(next(iter(_boards_cache)))
-    _boards_cache[key] = (now, deepcopy(list(boards)))
+    _drop_entry(key)
+    # An oversized read remains usable but must not evict other identities or
+    # allocate a retained copy. A refresh also discards its old cached version.
+    if _payload_bytes(boards, BOARDS_CACHE_MAX_BYTES) > BOARDS_CACHE_MAX_BYTES:
+        return
+    stored = deepcopy(list(boards))
+    size = _payload_bytes(stored, BOARDS_CACHE_MAX_BYTES)
+    if size > BOARDS_CACHE_MAX_BYTES:
+        return
+    while (len(_boards_cache) >= _MAX_CACHE_ENTRIES
+           or sum(_entry_bytes.values()) + size > BOARDS_CACHE_MAX_BYTES):
+        _drop_entry(next(iter(_boards_cache)))
+    _boards_cache[key] = (now, stored)
+    _entry_bytes[key] = size
 
 
 def clear_boards_cache(agent_token: str | None = None) -> None:
     if agent_token is None:
         _boards_cache.clear()
+        _entry_bytes.clear()
         _inflight.clear()
         pending = [ticket for tickets in _pending_loads.values() for ticket in tickets]
         _pending_loads.clear()
     else:
         key = _cache_key(agent_token)
-        _boards_cache.pop(key, None)
+        _drop_entry(key)
         _inflight.pop(key, None)
         pending = _pending_loads.pop(key, set())
     for ticket in pending:

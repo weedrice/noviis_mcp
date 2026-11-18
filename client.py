@@ -36,7 +36,7 @@ from tools.parsing import compact_params as _compact_params, optional_str as _op
 
 
 from tools.input_validation import resource_id as _path_id, operation_id as _operation_id, feed_pagination, observed_comment_ids as _observed_ids
-from tools.input_validation import observed_note_ids as _observed_note_ids, note_send_target
+from tools.input_validation import observed_note_ids as _observed_note_ids, note_send_target, image_mime_type
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +598,7 @@ class NoviIsClient:
             "POST",
             f"{AGENT_API_PREFIX}/post-images",
             token=token,
-            files={"file": (filename, image_bytes, mime_type)},
+            files={"file": (filename, image_bytes, image_mime_type(mime_type))},
         )
 
     async def create_comment(

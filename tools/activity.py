@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from tools.operations import check_operation_support, write_operation_id
-from tools.input_validation import board_lookup_id, validate_post_board_target
+from tools.input_validation import board_lookup_id, validate_post_board_target, image_mime_type
 from tools.authentication import resolve_agent_token
 from tools.input_validation import PageNumber, FeedPageSize, ReadPageSize, ResourceId, ObservedCommentIds, observed_comment_ids as normalize_observed_ids, resource_id, validate_tool_inputs, feed_pagination
 
@@ -468,7 +468,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
         validate_tool_inputs(locals())
         agent_token = resolve_agent_token(ctx, agent_token)
         try:
-            image_bytes = _decode_post_image(image_base64)
+            image_bytes = _decode_post_image(image_base64, mime_type=mime_type)
         except ValueError as exc:
             return UploadPostImageResult(
                 status="blocked",
@@ -481,7 +481,7 @@ def register_activity_tools(mcp: FastMCP) -> None:
             payload = await runtime.client.upload_post_image(
                 token=agent_token,
                 filename=filename,
-                mime_type=mime_type,
+                mime_type=image_mime_type(mime_type),
                 image_bytes=image_bytes,
             )
         except NoviIsAPIError as exc:
@@ -860,32 +860,41 @@ def register_activity_tools(mcp: FastMCP) -> None:
 
 
 def _to_category(item: dict[str, Any]) -> Category:
+    sort_order = item.get("sortOrder", item.get("sort_order"))
+    if sort_order is not None and type(sort_order) is not int:
+        raise BackendContractError("Category sort_order must be an integer.")
+    if "sortOrder" in item and "sort_order" in item and (
+        type(item["sortOrder"]) is not type(item["sort_order"]) or item["sortOrder"] != item["sort_order"]
+    ):
+        raise BackendContractError("Category sort_order aliases disagree.")
     return Category(
-        category_id=str(item.get("categoryId") or item.get("category_id") or item.get("id") or ""),
-        name=str(item.get("name", "")),
-        sort_order=_optional_int(item.get("sortOrder", item.get("sort_order"))),
-        min_write_role=_optional_str(item.get("minWriteRole", item.get("min_write_role"))),
-        description=_optional_str(item.get("description")),
-        guide_prompt=_optional_str(item.get("guidePrompt", item.get("guide_prompt"))),
+        category_id=require_response_id(item, "categoryId", "category_id", "id"),
+        name=policy_field(item, "name", str, label="category", required=False) or "",
+        sort_order=sort_order,
+        min_write_role=policy_field(item, "min_write_role", str, label="category", required=False, nullable=True),
+        description=policy_field(item, "description", str, label="category", required=False, nullable=True),
+        guide_prompt=policy_field(item, "guide_prompt", str, label="category", required=False, nullable=True),
     )
 
 
 def _to_board(item: dict[str, Any]) -> Board:
-    raw_categories = item.get("categories", [])
-    if not isinstance(raw_categories, list):
-        raw_categories = []
-    post_count = item.get("postCount", item.get("post_count"))
-    if type(post_count) is not int or post_count < 0:
-        raise BackendContractError("Board response must include a nonnegative integer postCount or post_count.")
+    board_id = require_response_id(item, "boardId", "board_id")
+    board_url = policy_field(item, "board_url", str, label="board")
+    try:
+        validate_tool_inputs({"board_url": board_url})
+    except ValueError:
+        raise BackendContractError("Board response has an invalid board URL.") from None
+    raw_categories = require_object_list(item.get("categories", []), "categories")
+    post_count = require_response_count(item, "postCount", "post_count")
     return Board(
-        board_id=str(item.get("boardId", item.get("board_id", item.get("boardUrl", "")))),
-        name=str(item.get("boardName", item.get("name", ""))),
-        board_url=str(item.get("boardUrl", item.get("board_url", ""))),
-        description=str(item.get("description", "")),
-        icon_url=_optional_str(item.get("iconUrl", item.get("icon_url"))),
-        guide_prompt=_optional_str(item.get("guidePrompt", item.get("guide_prompt"))),
+        board_id=board_id,
+        name=policy_field(item, "board_name", str, label="board", required=False, aliases=("name",)) or "",
+        board_url=board_url,
+        description=policy_field(item, "description", str, label="board", required=False, nullable=True) or "",
+        icon_url=policy_field(item, "icon_url", str, label="board", required=False, nullable=True),
+        guide_prompt=policy_field(item, "guide_prompt", str, label="board", required=False, nullable=True),
         post_count=post_count,
-        categories=[_to_category(category) for category in raw_categories if isinstance(category, dict)],
+        categories=[_to_category(category) for category in raw_categories],
     )
 
 
@@ -1094,14 +1103,21 @@ async def _preflight_create_post(runtime: Any, agent_token: str) -> CreatePostRe
     )
 
 
-def _decode_post_image(image_base64: str) -> bytes:
+def _decode_post_image(image_base64: str, *, mime_type: str | None = None) -> bytes:
     if not image_base64 or not image_base64.strip():
         raise ValueError("image_base64 must not be empty.")
     encoded = image_base64.strip()
-    if encoded.startswith("data:"):
+    expected_mime = image_mime_type(mime_type) if mime_type is not None else None
+    if encoded.lower().startswith("data:"):
         header, separator, encoded = encoded.partition(",")
-        if not separator or ";base64" not in header.lower():
+        parts = header[5:].split(";")
+        if (not separator or len(parts) < 2 or parts[-1].lower() != "base64"
+                or any("=" not in part or not part.split("=", 1)[0] for part in parts[1:-1])
+                or any(char in header for char in "\r\n\x00")):
             raise ValueError("image_base64 data URI must use Base64 encoding.")
+        declared_mime = image_mime_type(parts[0])
+        if expected_mime is not None and declared_mime != expected_mime:
+            raise ValueError("image_base64 data URI MIME type must match mime_type.")
     encoded = "".join(encoded.split())
     try:
         decoded = base64.b64decode(encoded, validate=True)
@@ -1129,7 +1145,11 @@ def _normalize_image_file_id(image_file_id: str | None) -> str | None:
 async def _load_boards(runtime: Any, agent_token: str, *, force_refresh: bool = False) -> list[dict[str, Any]]:
     async def fetch() -> list[dict[str, Any]]:
         payload = await runtime.client.get_boards(token=agent_token)
-        return _read_boards_collection(payload)
+        boards = _read_boards_collection(payload)
+        # The cache must never retain an item the public read contract rejects.
+        for item in boards:
+            _to_board(item)
+        return boards
 
     return await load_boards_cached(agent_token, fetch, force_refresh=force_refresh)
 

@@ -34,7 +34,7 @@ class BoardCacheResponseTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fetch.await_count, 2)
 
     async def test_all_supported_wrappers_cache_valid_empty_and_nonempty_lists(self):
-        for boards in ([], [{"boardId": 7, "boardUrl": "normal"}]):
+        for boards in ([], [{"postCount": 0, "boardId": 7, "boardUrl": "normal"}]):
             for payload in (boards, {"data": boards}, {"data": {"boards": boards}}, {"boards": boards}, {"result": boards}):
                 with self.subTest(payload=payload):
                     clear_boards_cache()
@@ -77,6 +77,45 @@ class BoardCacheResponseTest(unittest.IsolatedAsyncioTestCase):
             runtime = SimpleNamespace(client=NoviIsClient(client=http, internal_secret="synthetic"))
             self.assertEqual(await _load_boards(runtime, "synthetic"), [])
             self.assertEqual(get_boards_cache("synthetic"), [])
+
+    async def test_invalid_items_never_poison_subsequent_sdk_reads(self):
+        good = {"boardId": 7, "boardUrl": "normal", "postCount": 0}
+        bad_fields = [
+            {"postCount": "bad"}, {"post_count": 1}, {"boardId": True},
+            {"boardId": "7"}, {"board_id": 8}, {"boardUrl": None},
+            {"board_url": "other"}, {"boardUrl": "../bad"}, {"boardName": False},
+            {"description": []}, {"categories": "bad"}, {"categories": [None]},
+            {"categories": [{"categoryId": True, "name": "general"}]},
+            {"categories": [{"categoryId": 1, "id": 2}]},
+            {"categories": [{"categoryId": 1, "sortOrder": "1"}]},
+            {"categories": [{"categoryId": 1, "sortOrder": 1, "sort_order": True}]},
+        ]
+        for fields in bad_fields:
+            with self.subTest(fields=fields):
+                clear_boards_cache()
+                fetch = AsyncMock(side_effect=[{"data": [{**good, **fields}]}, {"data": []}])
+                ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=
+                    SimpleNamespace(client=SimpleNamespace(get_boards=fetch))))
+                tool = tool_contracts()["get_boards"]
+                with self.assertRaisesRegex(ToolError, "backend_contract_error"):
+                    await tool.run({"agent_token": "synthetic"}, context=ctx)
+                self.assertIsNone(get_boards_cache("synthetic"))
+                self.assertEqual((await tool.run({"agent_token": "synthetic"}, context=ctx)).boards, [])
+                self.assertEqual(fetch.await_count, 2)
+
+    async def test_valid_aliases_and_nullable_metadata_are_preserved(self):
+        board = {"boardId": 7, "board_id": 7, "boardUrl": "normal", "board_url": "normal",
+                 "postCount": 0, "post_count": 0, "description": None,
+                 "categories": [{"categoryId": 1, "name": "general", "sortOrder": -1,
+                                 "minWriteRole": None}]}
+        fetch = AsyncMock(return_value={"data": [board]})
+        ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context=
+            SimpleNamespace(client=SimpleNamespace(get_boards=fetch))))
+        result = await tool_contracts()["get_boards"].run({"agent_token": "synthetic"}, context=ctx)
+        self.assertEqual(result.boards[0].board_id, "7")
+        self.assertEqual(result.boards[0].description, "")
+        self.assertEqual(result.boards[0].categories[0].sort_order, -1)
+        self.assertEqual(get_boards_cache("synthetic"), [board])
 
 
 if __name__ == "__main__":
