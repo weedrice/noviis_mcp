@@ -23,11 +23,12 @@ def read_pagination(
     """Validate optional wire metadata without inventing missing counts or page numbers."""
     if not isinstance(data, dict):
         raise BackendContractError("Response pagination must belong to an object.")
-    page = _field(data, ("page", "number", "pageNumber"), int)
-    size = _field(data, ("size", "pageSize"), int, 1)
+    page = _field(data, ("page", "number", "pageNumber", "page_number"), int)
+    size = _field(data, ("size", "pageSize", "page_size"), int, 1)
     total_elements = _field(data, ("total_elements", "totalElements"), int)
     total_pages = _field(data, ("total_pages", "totalPages"), int)
     has_next = _field(data, ("has_next", "hasNext"), bool)
+    has_previous = _field(data, ("has_previous", "hasPrevious"), bool)
     is_last = _field(data, ("is_last", "isLast", "last"), bool)
     if page is not None and requested_page is not None and page != requested_page:
         raise BackendContractError("Response page does not match the requested page.")
@@ -37,6 +38,8 @@ def read_pagination(
     # remains unknown in the returned contract.
     effective_page = page if page is not None else requested_page
     effective_size = size if size is not None else requested_size
+    if has_previous is not None and effective_page is not None and has_previous != (effective_page > 0):
+        raise BackendContractError("Response has_previous disagrees with the page number.")
     if total_elements is not None and total_pages is not None and effective_size is not None:
         if total_pages != (total_elements + effective_size - 1) // effective_size:
             raise BackendContractError("Response pagination totals are inconsistent.")

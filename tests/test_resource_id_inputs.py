@@ -20,7 +20,7 @@ class ResourceIdInputTest(unittest.TestCase):
     def test_positive_decimal_long_and_leading_zero_compatibility(self):
         for value in (1, MAX_ID, "1", str(MAX_ID), "0001", "000" + str(MAX_ID), "0" * 127 + "1"):
             with self.subTest(value=value):
-                self.assertEqual(resource_id(value), str(value))
+                self.assertEqual(resource_id(value), str(int(value)))
         self.assertEqual(board_lookup_id("0007"), 7)
         self.assertEqual(board_lookup_id("000" + str(MAX_ID)), MAX_ID)
         with self.assertRaisesRegex(ValueError, "use board_url"):
@@ -95,9 +95,9 @@ class ResourceIdSdkTest(unittest.IsolatedAsyncioTestCase):
             args = {"post_id": value, "agent_token": "synthetic-resource-input"}
             normalized, invalid, missing, warning = validate_action("get_post_comments", args)
             self.assertFalse(invalid or missing or warning)
-            self.assertEqual(normalized["post_id"], str(value))
+            self.assertEqual(normalized["post_id"], str(int(value)))
             self.assertEqual((await tool_contracts()["get_post_comments"].run(args, context=ctx)).comments, [])
-            self.assertEqual(client.get_post_comments.call_args.kwargs["post_id"], str(value))
+            self.assertEqual(client.get_post_comments.call_args.kwargs["post_id"], str(int(value)))
 
     async def test_all_client_resource_path_callers_reject_impossible_long_before_http(self):
         requests = []

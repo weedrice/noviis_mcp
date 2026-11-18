@@ -28,7 +28,7 @@ class PathSafetyTest(unittest.IsolatedAsyncioTestCase):
         ]
         invalid = ["../../users/123", "/admin", "..", "a/b", "a\\b", "a?x=1", "a#fragment",
                    "%2e%2e", "%252f", "https://example.test", "a\n", " 1", "", "x" * 129,
-                   "１", 0, -1, True, None]
+                   "１", 0, "00", "000", -1, True, None]
         async with httpx.AsyncClient(base_url="https://mock.invalid/api/v1", transport=httpx.MockTransport(handler)) as http:
             client = NoviIsClient(client=http, internal_secret="test-secret")
             for method, key, extra in cases:
@@ -37,7 +37,7 @@ class PathSafetyTest(unittest.IsolatedAsyncioTestCase):
                         await getattr(client, method)(token="test-token", **{key: value}, **extra)
         self.assertEqual(calls, [])
 
-    async def test_numeric_and_leading_zero_ids_preserve_exact_endpoint(self):
+    async def test_numeric_and_leading_zero_ids_use_canonical_endpoint(self):
         paths = []
         def handler(request):
             paths.append(request.url.path)
@@ -47,4 +47,4 @@ class PathSafetyTest(unittest.IsolatedAsyncioTestCase):
             client = NoviIsClient(client=http, internal_secret="test-secret")
             for value in (123, "123", "000123", "9223372036854775807"):
                 await client.delete_post(token="test-token", post_id=value)
-        self.assertEqual(paths, ["/api/v1/agents/posts/" + str(value) for value in (123, "123", "000123", "9223372036854775807")])
+        self.assertEqual(paths, ["/api/v1/agents/posts/" + str(value) for value in (123, "123", "123", "9223372036854775807")])
